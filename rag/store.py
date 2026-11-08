@@ -13,6 +13,7 @@ Tabel:
 from __future__ import annotations
 
 import json
+import math
 import re
 import sqlite3
 from dataclasses import dataclass, field
@@ -23,6 +24,7 @@ from typing import Iterable
 import numpy as np
 
 import config
+from rag.bm25 import BM25Index, tokenize
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -79,6 +81,7 @@ class VectorStore:
         self.db.executescript(SCHEMA)
         self._matrix = np.zeros((0, 0), dtype=np.float32)
         self._rows: list[dict] = []
+        self._bm25: BM25Index | None = None   # dibangun malas, dibuang saat data berubah
         self._dirty = True
         self._init_meta(rebuild)
 
@@ -125,6 +128,7 @@ class VectorStore:
                                "type": m.get("source_type")})
             vecs.append(np.frombuffer(blob, dtype=np.float32))
         self._matrix = np.vstack(vecs) if vecs else np.zeros((0, 0), dtype=np.float32)
+        self._bm25 = None
         self._dirty = False
 
     @property
@@ -226,6 +230,35 @@ class VectorStore:
             r = self._rows[idx[o]]
             hits.append(Hit(r["id"], s, r["text"], r["header"], r["metadata"]))
         return hits
+
+    def keyword_search(self, query: str, k: int = 5, course: str | None = None,
+                       source_type: str | None = None) -> list[Hit]:
+        """Top-k chunk berdasarkan BM25 (tanpa embedding). Cadangan saat embedding tidak tersedia.
+
+        Hit.score = skor BM25 mentah (bukan cosine; jangan dibandingkan dengan MIN_SCORE).
+        Teks yang diindeks = header + isi chunk, jadi nama file/judul/bagian ikut dicari."""
+        self._ensure_loaded()
+        if not self._rows:
+            return []
+        terms = tokenize(query)
+        if not terms:
+            return []
+        if self._bm25 is None:
+            self._bm25 = BM25Index(tokenize(f"{r['header']}\n{r['text']}") for r in self._rows)
+        allowed = None
+        if course or source_type:
+            want = norm_name(course) if course else None
+            allowed = {i for i, r in enumerate(self._rows)
+                       if (want is None or r["course"] == want)
+                       and (source_type is None or r["type"] == source_type)}
+            if not allowed:
+                return []
+        need = max(1, math.ceil(config.KEYWORD_MIN_COVERAGE * len(set(terms))))
+        out = []
+        for i, score, _ in self._bm25.search(terms, allowed, k, need):
+            r = self._rows[i]
+            out.append(Hit(r["id"], score, r["text"], r["header"], r["metadata"]))
+        return out
 
     # ------------------------------------------------------------ info
     def courses(self) -> list[str]:

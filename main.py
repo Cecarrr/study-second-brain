@@ -1,7 +1,9 @@
 """CLI Study Second Brain.  python main.py
 
-Perintah: /tasks (daftar tugas, tanpa model) /ingest /usage /reset /help /exit
+Perintah: /today (ringkasan tugas) /tasks (daftar tugas) /notes (daftar catatan), ketiganya tanpa
+model; /ingest /usage /reset /help /exit
 """
+import logging
 import sys
 
 import config
@@ -14,8 +16,12 @@ from rag.stack import open_stack
 from rag.store import EmbeddingMismatchError
 from tools.common import ToolContext
 from tools.registry import build_registry
+from tools.summary import build_daily_summary
 
-HELP = "Perintah: /tasks  /ingest  /usage  /reset  /help  /exit. Selain itu, tulis saja seperti biasa."
+log = logging.getLogger(__name__)
+
+HELP = ("Perintah: /today  /tasks  /notes  /ingest  /usage  /reset  /help  /exit. "
+        "Selain itu, tulis saja seperti biasa.")
 
 
 def ingest(store, embedder):
@@ -40,6 +46,12 @@ def main():
     reg = build_registry(ctx)
     agent = Agent(reg, keypool.chat, courses_fn=store.courses, today_fn=ctx.today, notify=print)
     print(f"Study Second Brain | indeks: {len(store)} chunk. {HELP}")
+    if config.SUMMARY_ON_START:
+        try:
+            print("\n" + build_daily_summary(ctx.tasks))
+        except Exception as e:  # noqa: BLE001  ringkasan tidak boleh menggagalkan CLI
+            log.exception("Ringkasan harian gagal")
+            print(f"\n(Ringkasan harian gagal dibuat: {type(e).__name__}: {e})")
     while True:
         try:
             text = input("\nkamu> ").strip()
@@ -50,19 +62,29 @@ def main():
         cmd = text.lower()
         if cmd in ("/exit", "/quit"):
             break
-        if cmd == "/help":
-            print(HELP)
-        elif cmd == "/reset":
-            agent.reset()
-            print("Riwayat percakapan dikosongkan.")
-        elif cmd == "/usage":
-            print(keypool.usage_report())
-        elif cmd == "/tasks":
-            print(reg.execute(ToolCall(name="list_tasks", args={})).content)
-        elif cmd == "/ingest":
-            ingest(store, embedder)
-        else:
-            print("\nasisten> " + agent.ask(text))
+        try:
+            if cmd == "/help":
+                print(HELP)
+            elif cmd == "/reset":
+                agent.reset()
+                print("Riwayat percakapan dikosongkan.")
+            elif cmd == "/usage":
+                print(keypool.usage_report())
+            elif cmd == "/today":
+                print(build_daily_summary(ctx.tasks))
+            elif cmd == "/tasks":
+                print(reg.execute(ToolCall(name="list_tasks", args={})).content)
+            elif cmd == "/notes":
+                print(reg.execute(ToolCall(name="list_notes", args={})).content)
+            elif cmd == "/ingest":
+                ingest(store, embedder)
+            else:
+                print("\nasisten> " + agent.ask(text))
+        except KeyboardInterrupt:
+            print("\n(dibatalkan)")
+        except Exception as e:  # noqa: BLE001  satu perintah gagal tidak boleh menutup CLI
+            log.exception("Perintah gagal: %s", text[:80])
+            print(f"\nMaaf, terjadi kesalahan: {type(e).__name__}: {e}")
 
 
 if __name__ == "__main__":

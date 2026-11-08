@@ -29,6 +29,24 @@ def norm(s: str | None) -> str:
     return re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
 
 
+_UNSET = object()   # pembeda "tidak diubah" dari None ("kosongkan")
+
+
+class TaskConflict(Exception):
+    """Perubahan akan membuat dua tugas pending dengan judul + tenggat sama."""
+
+    def __init__(self, other: dict):
+        super().__init__(f"tugas #{other['id']} sudah memakai judul dan tenggat itu")
+        self.other = other
+
+
+def title_matches(words: list[str], title: str) -> bool:
+    """Semua kata kunci harus menjadi AWAL dari suatu kata di judul ('uas' cocok 'UAS Basis Data',
+    tidak cocok 'Evaluasi'; 'lap' cocok 'Laporan'). Pencocokan substring sebelumnya salah di kasus pertama."""
+    toks = norm(title).split()
+    return all(any(t.startswith(w) for t in toks) for w in words)
+
+
 class TaskDB:
     def __init__(self, path: str | Path | None = None, today_fn: Callable[[], date] | None = None):
         self.path = Path(path or config.DB_PATH)
@@ -71,6 +89,42 @@ class TaskDB:
             c.execute("UPDATE tasks SET status='done', done_at=? WHERE id=?", (self._now(), task_id))
             return dict(c.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()), False
 
+    def update(self, task_id: int, title=_UNSET, due_date=_UNSET, course=_UNSET, notes=_UNSET,
+               status: str | None = None) -> tuple[dict, dict] | None:
+        """Ubah field tugas. Argumen yang tidak diberikan tidak disentuh; None = kosongkan.
+        Kembalikan (lama, baru) atau None bila id tidak ada. Raise TaskConflict bila hasilnya
+        menduplikasi tugas pending lain (judul + tenggat sama)."""
+        with closing(self._conn()) as c, c:
+            r = c.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
+            if r is None:
+                return None
+            old, new = dict(r), dict(r)
+            for key, val in (("title", title), ("due_date", due_date), ("course", course),
+                             ("notes", notes)):
+                if val is not _UNSET:
+                    new[key] = val
+            if status in ("pending", "done") and status != old["status"]:
+                new["status"] = status
+                new["done_at"] = self._now() if status == "done" else None
+            if new["status"] == "pending":
+                for o in c.execute("SELECT * FROM tasks WHERE status='pending' AND id!=? "
+                                   "AND IFNULL(due_date,'')=?", (task_id, new["due_date"] or "")):
+                    if norm(o["title"]) == norm(new["title"]):
+                        raise TaskConflict(dict(o))
+            c.execute("UPDATE tasks SET title=?, due_date=?, course=?, notes=?, status=?, done_at=? "
+                      "WHERE id=?", (new["title"], new["due_date"], new["course"], new["notes"],
+                                     new["status"], new["done_at"], task_id))
+            return old, new
+
+    def delete(self, task_id: int) -> dict | None:
+        """Hapus permanen. Kembalikan tugas yang dihapus, atau None bila id tidak ada."""
+        with closing(self._conn()) as c, c:
+            r = c.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
+            if r is None:
+                return None
+            c.execute("DELETE FROM tasks WHERE id=?", (task_id,))
+            return dict(r)
+
     # ------------------------------------------------------------ baca
     def get(self, task_id: int) -> dict | None:
         with closing(self._conn()) as c:
@@ -99,15 +153,20 @@ class TaskDB:
             rows = [r for r in rows if norm(r["course"]) == want or want in norm(r["course"])]
         return rows
 
-    def find_pending(self, text: str) -> list[dict]:
-        """Tugas pending yang judulnya cocok dengan `text` (semua kata kunci ada di judul)."""
-        words = norm(text).split()
+    def find(self, text: str, status: str = "pending") -> list[dict]:
+        """Tugas dengan status tertentu yang judulnya cocok dengan `text` (lihat title_matches).
+        Judul yang persis sama didahulukan."""
+        q = norm(text)
+        words = q.split()
         if not words:
             return []
-        out = []
-        for r in self.list("pending"):
-            t = norm(r["title"])
-            if t == norm(text) or all(w in t for w in words):
-                out.append(r)
-        exact = [r for r in out if norm(r["title"]) == norm(text)]
+        out = [r for r in self.list(status) if norm(r["title"]) == q or title_matches(words, r["title"])]
+        exact = [r for r in out if norm(r["title"]) == q]
         return exact or out
+
+    def find_pending(self, text: str) -> list[dict]:
+        return self.find(text, "pending")
+
+    def find_any(self, text: str) -> list[dict]:
+        """Untuk ubah/hapus: tugas belum-selesai yang cocok; bila tidak ada, yang sudah selesai."""
+        return self.find(text, "pending") or self.find(text, "done")

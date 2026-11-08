@@ -12,7 +12,9 @@ import config
 from prompts import build_system_prompt
 from providers.base import Message, ProviderError
 
-WRITE_TOOLS = {"add_note", "add_task", "complete_task"}
+# Tool yang mengubah data. Setelah salah satunya jalan, hasil baca yang di-cache pada giliran
+# yang sama sudah basi; lihat pembersihan `done` di Agent.ask.
+WRITE_TOOLS = {"add_note", "add_task", "complete_task", "update_task", "delete_task"}
 
 
 class Agent:
@@ -36,7 +38,7 @@ class Agent:
         user = Message.user(text)
         msgs = [Message.system(system), *self.history, user]
         specs = self.reg.specs()
-        done: dict[str, str] = {}               # kunci panggilan -> hasil (giliran ini)
+        done: dict[str, tuple[str, str]] = {}   # kunci panggilan -> (nama tool, hasil) pada giliran ini
 
         for _ in range(config.MAX_ITERATIONS):
             try:
@@ -54,12 +56,17 @@ class Agent:
                 key = call.name + json.dumps(call.args, sort_keys=True, ensure_ascii=False)
                 if key in done:
                     msgs.append(Message.tool(call, "Panggilan identik sudah dijalankan pada giliran ini "
-                                             f"dengan hasil: {done[key][:200]}. Jangan diulang; lanjutkan "
+                                             f"dengan hasil: {done[key][1][:200]}. Jangan diulang; lanjutkan "
                                              "atau jawab pengguna.", is_error=True))
                     continue
                 self.notify(f"  [{call.name}] {json.dumps(call.args, ensure_ascii=False)[:120]}")
                 res = self.reg.execute(call)
-                done[key] = res.content
+                if call.name in WRITE_TOOLS:
+                    # Data berubah: pembacaan lama tidak berlaku lagi, jadi model boleh memverifikasi
+                    # (mis. list_tasks setelah complete_task). Panggilan tulis tetap diingat supaya
+                    # tidak dieksekusi dua kali (catatan/tugas ganda, hapus ganda).
+                    done = {k: v for k, v in done.items() if v[0] in WRITE_TOOLS}
+                done[key] = (call.name, res.content)
                 msgs.append(res)
         last = next((m.content for m in reversed(msgs) if m.role == "tool"), "")
         return ("Aku mencapai batas langkah untuk satu pesan. Hasil terakhir:\n" + last[:600]

@@ -120,16 +120,38 @@ CHUNK_DROP_BELOW = 30         # buang chunk dengan < 30 karakter non-spasi
 TOP_K = 5
 MIN_SCORE = 0.50              # awal; setel saat uji retrieval (hari 1, blok 5)
 
+# Cadangan pencarian kata kunci (BM25) saat embedding query tidak tersedia (rag/bm25.py).
+KEYWORD_FALLBACK = True       # False = perilaku lama: error layanan dikembalikan ke agent
+KEYWORD_MIN_COVERAGE = 0.5    # porsi minimal kata query (setelah stopword dibuang) yang harus cocok
+BM25_K1 = 1.5
+BM25_B = 0.75
+EMBED_FAIL_COOLDOWN_S = 120   # setelah embedding query gagal, langsung pakai kata kunci selama ini
+
 # ---------------------------------------------------------------- Ingest
-STRUCTURED_EXTENSIONS = {".md", ".txt", ".csv", ".pdf", ".docx", ".pptx"}
+STRUCTURED_EXTENSIONS = {".md", ".txt", ".csv", ".pdf", ".docx", ".pptx", ".ipynb"}
 TEXT_LIKE_EXTENSIONS = {
     ".py", ".ino", ".c", ".cpp", ".h", ".java", ".js", ".ts", ".json",
     ".yml", ".yaml", ".sql", ".sh", ".toml", ".ini", ".cfg", ".rst",
 }
 SUPPORTED_EXTENSIONS = STRUCTURED_EXTENSIONS | TEXT_LIKE_EXTENSIONS
 
+# Format Office lama dikonversi otomatis lewat LibreOffice (rag/convert.py). Tanpa LibreOffice
+# file ini dilewati dengan petunjuk "simpan ulang sebagai ...".
+LEGACY_CONVERT = {".ppt": ".pptx", ".doc": ".docx"}
+SOFFICE_PATH = os.getenv("SOFFICE_PATH", "").strip()   # kosong = cari otomatis
+CONVERT_CACHE_DIR = DATA_DIR / "converted"             # di luar MATERI_DIR (jangan ter-index ganda)
+CONVERT_TIMEOUT_S = 180
+
+# Notebook Jupyter: sel markdown + sel kode (+ keluaran teks singkat); gambar diabaikan.
+IPYNB_INCLUDE_OUTPUTS = True
+IPYNB_OUTPUT_MAX_CHARS = 400
+
 PDF_MIN_CHARS_PER_PAGE = 30   # di bawah ini dianggap PDF scan dan dilewati
 MAX_CSV_ROWS = 5000
+
+# ---------------------------------------------------------------- CLI
+SUMMARY_ON_START = True       # tampilkan ringkasan tugas saat CLI dibuka (tanpa request model)
+SUMMARY_DUE_DAYS = 3          # tugas dengan tenggat dalam N hari ke depan dianggap mendesak
 
 
 # ---------------------------------------------------------------- Helper

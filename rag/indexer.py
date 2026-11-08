@@ -14,7 +14,7 @@ from rag.embedder import Embedder
 from rag.ingest import Document, discover_files, read_document
 from rag.store import VectorStore
 
-LEGACY_HINT = {".ppt": ".pptx", ".doc": ".docx", ".xls": ".xlsx"}
+LEGACY_HINT = {".ppt": ".pptx", ".doc": ".docx", ".xls": ".csv"}   # .xlsx belum didukung, .csv sudah
 
 
 @dataclass

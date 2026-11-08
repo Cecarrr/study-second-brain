@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
+from db.database import TaskConflict
 from providers.base import ToolSpec
 from tools.common import ToolContext, ToolError
 
@@ -49,6 +50,40 @@ COMPLETE_SPEC = ToolSpec(
         "title": {"type": "string", "description": "Kata kunci judul tugas."},
         "task_id": {"type": "integer", "description": "Id tugas dari list_tasks."}}})
 
+UPDATE_SPEC = ToolSpec(
+    name="update_task",
+    description=(
+        "Mengubah tugas yang sudah ada: judul, tenggat, mata kuliah, keterangan, atau membukanya "
+        "kembali. GUNAKAN untuk 'ubah/ganti/geser/undur deadline ...', 'ganti nama tugas ...', "
+        "'buka lagi tugas ...'. Tentukan tugas dengan 'title' (kata kunci judul yang LAMA) atau "
+        "'task_id' dari list_tasks. Isi HANYA bagian yang berubah: judul baru di 'new_title', tenggat "
+        "baru di 'due_date' (YYYY-MM-DD, hitung dari kalender di prompt sistem), 'clear_due_date'=true "
+        "untuk menghapus tenggat, 'reopen'=true untuk membuka kembali tugas yang sudah selesai. "
+        "JANGAN dipakai untuk menandai selesai (itu complete_task) atau menambah tugas baru "
+        "(add_task). Bila hasilnya daftar kandidat, tanyakan ke pengguna yang mana; jangan menebak id."),
+    parameters={"type": "object", "properties": {
+        "title": {"type": "string", "description": "Kata kunci judul tugas yang akan diubah (judul lama)."},
+        "task_id": {"type": "integer", "description": "Id tugas dari list_tasks, bila sudah diketahui."},
+        "new_title": {"type": "string", "description": "Judul baru."},
+        "due_date": {"type": "string", "description": "Tenggat baru, format YYYY-MM-DD."},
+        "clear_due_date": {"type": "boolean", "description": "true = hapus tenggat."},
+        "course": {"type": "string", "description": "Mata kuliah baru."},
+        "notes": {"type": "string", "description": "Keterangan baru (menggantikan yang lama)."},
+        "reopen": {"type": "boolean", "description": "true = tandai belum selesai lagi."}}})
+
+DELETE_SPEC = ToolSpec(
+    name="delete_task",
+    description=(
+        "Menghapus PERMANEN satu tugas dari daftar. GUNAKAN hanya bila pengguna jelas meminta "
+        "menghapus, membatalkan, atau membuang tugas ('hapus tugas ...', 'batalkan deadline ...', "
+        "'tugas itu salah catat'). JANGAN dipakai untuk tugas yang sudah dikerjakan ('sudah selesai', "
+        "'sudah dikumpulkan' -> complete_task) dan jangan menghapus lebih dari yang diminta. Tentukan "
+        "dengan 'title' (kata kunci judul) atau 'task_id' dari list_tasks. Bila hasilnya daftar "
+        "kandidat, tanyakan ke pengguna yang mana; jangan menebak id."),
+    parameters={"type": "object", "properties": {
+        "title": {"type": "string", "description": "Kata kunci judul tugas yang akan dihapus."},
+        "task_id": {"type": "integer", "description": "Id tugas dari list_tasks."}}})
+
 _DAYS = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"]
 
 
@@ -74,21 +109,25 @@ def fmt_task(t: dict, today: date) -> str:
     return f"#{t['id']} [{mark}] {t['title']} | {due_text(t['due_date'], today)}{course}{notes}"
 
 
+def _check_due(due: str, today: date) -> str:
+    """Validasi tenggat dari LLM; kembalikan string ISO yang sudah dinormalkan."""
+    try:
+        d = date.fromisoformat(due)
+    except ValueError:
+        raise ToolError(f"due_date '{due}' bukan format YYYY-MM-DD (contoh: {today + timedelta(days=5)}).")
+    if d < today:
+        raise ToolError(f"Tanggal {due} sudah lewat (hari ini {today.isoformat()}). Periksa lagi "
+                        "tanggalnya dari kalender di prompt sistem; bila pengguna memang bermaksud "
+                        "tanggal lampau, tanyakan dulu.")
+    if d > today + timedelta(days=730):
+        raise ToolError(f"Tanggal {due} terlalu jauh (hari ini {today.isoformat()}); kemungkinan salah tahun.")
+    return d.isoformat()
+
+
 def add_task(ctx: ToolContext, a: dict) -> str:
     title = a["title"].strip()
     today = ctx.today()
-    due = a.get("due_date")
-    if due:
-        try:
-            d = date.fromisoformat(due)
-        except ValueError:
-            raise ToolError(f"due_date '{due}' bukan format YYYY-MM-DD (contoh: {today + timedelta(days=5)}).")
-        if d < today:
-            raise ToolError(f"Tanggal {due} sudah lewat (hari ini {today.isoformat()}). Periksa lagi "
-                            "tanggalnya dari kalender di prompt sistem; bila pengguna memang bermaksud "
-                            "tanggal lampau, tanyakan dulu.")
-        if d > today + timedelta(days=730):
-            raise ToolError(f"Tanggal {due} terlalu jauh (hari ini {today.isoformat()}); kemungkinan salah tahun.")
+    due = _check_due(a["due_date"], today) if a.get("due_date") else None
     course, _ = ctx.resolve_course(a.get("course"))
     t, created = ctx.tasks.add(title, due, course, a.get("notes"))
     if not created:
@@ -129,3 +168,82 @@ def complete_task(ctx: ToolContext, a: dict) -> str:
                 "complete_task dengan task_id:\n" + "\n".join(fmt_task(c, today) for c in cands))
     t, _ = ctx.tasks.complete(cands[0]["id"])
     return f"Tugas #{t['id']} '{t['title']}' ditandai selesai."
+
+
+# ---------------------------------------------------------------- ubah / hapus
+def _pick(ctx: ToolContext, a: dict, tool: str) -> tuple[dict | None, str | None]:
+    """Tentukan satu tugas dari task_id atau title. Kembalikan (tugas, None) atau (None, teks
+    daftar kandidat untuk ditanyakan ke pengguna). Raise ToolError bila tidak ada yang cocok."""
+    tid, title = a.get("task_id"), a.get("title")
+    if tid is None and not title:
+        raise ToolError("Isi title (kata kunci judul tugas) atau task_id.")
+    if tid is not None:
+        t = ctx.tasks.get(int(tid))
+        if t is None:
+            raise ToolError(f"Tugas #{tid} tidak ada. Panggil list_tasks untuk melihat id yang benar.")
+        return t, None
+    cands = ctx.tasks.find_any(title)
+    if not cands:
+        raise ToolError(f"Tidak ada tugas yang cocok dengan '{title}'. Panggil list_tasks "
+                        "(status=all) untuk melihat daftar, atau beri tahu pengguna.")
+    if len(cands) > 1:
+        today = ctx.today()
+        return None, (f"Ada beberapa tugas yang cocok; tanyakan ke pengguna yang mana, lalu panggil "
+                      f"{tool} dengan task_id:\n" + "\n".join(fmt_task(c, today) for c in cands))
+    return cands[0], None
+
+
+_FIELD_LABEL = {"title": "judul", "due_date": "tenggat", "course": "mata kuliah",
+                "notes": "keterangan", "status": "status"}
+
+
+def _show(key: str, val) -> str:
+    if key == "status":
+        return "selesai" if val == "done" else "belum selesai"
+    return str(val) if val else "(kosong)"
+
+
+def update_task(ctx: ToolContext, a: dict) -> str:
+    today = ctx.today()
+    if a.get("due_date") and a.get("clear_due_date"):
+        raise ToolError("Pilih salah satu: due_date (tenggat baru) atau clear_due_date (hapus tenggat).")
+    changes: dict = {}
+    if a.get("new_title"):
+        changes["title"] = a["new_title"].strip()
+    if a.get("due_date"):
+        changes["due_date"] = _check_due(a["due_date"], today)
+    elif a.get("clear_due_date"):
+        changes["due_date"] = None
+    if a.get("course"):
+        changes["course"], _ = ctx.resolve_course(a["course"])
+    if a.get("notes"):
+        changes["notes"] = a["notes"].strip()
+    if a.get("reopen"):
+        changes["status"] = "pending"
+    if not changes:
+        raise ToolError("Tidak ada perubahan yang diminta. Isi minimal satu: new_title, due_date, "
+                        "clear_due_date, course, notes, atau reopen.")
+
+    t, cands = _pick(ctx, a, "update_task")
+    if cands:
+        return cands
+    try:
+        old, new = ctx.tasks.update(t["id"], **changes)
+    except TaskConflict as e:
+        raise ToolError(f"Sudah ada tugas lain dengan judul dan tenggat yang sama: "
+                        f"{fmt_task(e.other, today)}. Gunakan tugas itu, atau ubah judul/tenggatnya.")
+    diff = [f"{_FIELD_LABEL[k]}: {_show(k, old[k])} -> {_show(k, new[k])}"
+            for k in _FIELD_LABEL if old[k] != new[k]]
+    if not diff:
+        return f"Tidak ada yang berubah (nilainya sudah sama): {fmt_task(new, today)}"
+    return f"Tugas #{new['id']} diperbarui ({'; '.join(diff)}): {fmt_task(new, today)}"
+
+
+def delete_task(ctx: ToolContext, a: dict) -> str:
+    t, cands = _pick(ctx, a, "delete_task")
+    if cands:
+        return cands
+    gone = ctx.tasks.delete(t["id"])
+    if gone is None:   # terhapus di antara pencarian dan penghapusan
+        raise ToolError(f"Tugas #{t['id']} sudah tidak ada.")
+    return f"Tugas dihapus permanen: {fmt_task(gone, ctx.today())}"

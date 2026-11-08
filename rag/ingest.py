@@ -21,6 +21,7 @@ import codecs
 import csv
 import hashlib
 import io
+import json
 import logging
 import re
 import unicodedata
@@ -30,6 +31,7 @@ from pathlib import Path
 from typing import Callable, Iterator
 
 import config
+from rag import convert
 
 log = logging.getLogger(__name__)
 
@@ -126,6 +128,7 @@ def discover_files(root: str | Path, source_type: str = "materi",
     skipped: list[tuple[str, str]] = []
     if not root.exists():
         return refs, skipped
+    soffice: str | None = None   # dicari malas, hanya bila ada file .ppt/.doc
 
     for path in sorted(root.rglob("*")):
         if not path.is_file():
@@ -134,7 +137,14 @@ def discover_files(root: str | Path, source_type: str = "materi",
         if any(part.startswith(".") for part in rel.parts) or path.name.startswith("~$"):
             continue
         ext = path.suffix.lower()
-        if ext not in config.SUPPORTED_EXTENSIONS:
+        if ext in config.LEGACY_CONVERT:
+            if soffice is None:
+                soffice = convert.find_soffice() or ""
+            if not soffice:
+                skipped.append((rel.as_posix(), f"format {ext} butuh LibreOffice untuk dikonversi "
+                                                "(tidak ditemukan)"))
+                continue
+        elif ext not in config.SUPPORTED_EXTENSIONS:
             skipped.append((rel.as_posix(), f"format {ext or '(tanpa ekstensi)'} belum didukung"))
             continue
         size = path.stat().st_size
@@ -210,6 +220,9 @@ def _parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
             k, v = line.split(":", 1)
             meta[k.strip().lower()] = v.strip().strip("\"'")
     return meta, text[m.end():]
+
+
+parse_frontmatter = _parse_frontmatter   # dipakai tools/notes.py
 
 
 def _read_markdown(path: Path, doc: Document) -> None:
@@ -464,7 +477,103 @@ def _read_csv(path: Path, doc: Document) -> None:
     doc.segments = segments
 
 
+_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+_REPR_ONLY_RE = re.compile(r"^<[^<>\n]+>$")      # '<Figure size 640x480 ...>', '<matplotlib... at 0x..>'
+
+
+def _nb_text(src) -> str:
+    return "".join(src) if isinstance(src, list) else str(src or "")
+
+
+def _nb_outputs(outputs) -> str:
+    """Keluaran teks sel kode, tanpa gambar/HTML, tanpa kode warna ANSI, dipangkas."""
+    parts: list[str] = []
+    for o in outputs or []:
+        kind = o.get("output_type")
+        if kind == "stream":
+            text = _nb_text(o.get("text"))
+        elif kind in ("execute_result", "display_data"):
+            text = _nb_text((o.get("data") or {}).get("text/plain")).strip()
+            if _REPR_ONLY_RE.match(text):
+                continue
+        elif kind == "error":
+            text = f"{o.get('ename', 'Error')}: {o.get('evalue', '')}"
+        else:
+            continue
+        text = _ANSI_RE.sub("", text).strip()
+        if text:
+            parts.append(text)
+    out = "\n".join(parts)
+    limit = config.IPYNB_OUTPUT_MAX_CHARS
+    return out if len(out) <= limit else out[:limit].rstrip() + " ..."
+
+
+def _read_ipynb(path: Path, doc: Document) -> None:
+    """Notebook -> satu segmen per bagian (dipisah judul markdown); halaman = nomor sel pertama.
+
+    Sel kode dipagari ```bahasa agar jelas bedanya dengan teks, dan komentar '#' di dalam kode
+    tidak salah dibaca sebagai judul."""
+    nb = json.loads(_decode(path.read_bytes(), doc))
+    cells = nb.get("cells")
+    if cells is None:
+        raise ValueError("notebook format lama (nbformat < 4); simpan ulang dari Jupyter terbaru")
+    meta = nb.get("metadata") or {}
+    lang = ((meta.get("language_info") or {}).get("name")
+            or (meta.get("kernelspec") or {}).get("language") or "python")
+    doc.page_label = "sel"
+
+    segments: list[Segment] = []
+    stack: list[tuple[int, str]] = []
+    buf: list[str] = []
+    start: int | None = None          # nomor sel pertama yang berkontribusi pada segmen berjalan
+
+    def flush() -> None:
+        nonlocal start
+        content = _clean("\n".join(buf))
+        if content:
+            segments.append(Segment(content, page=start, heading=_heading_path(stack)))
+        buf.clear()
+        start = None
+
+    def add(idx: int, text: str) -> None:
+        nonlocal start
+        if start is None:
+            start = idx
+        buf.append(text)
+
+    for idx, cell in enumerate(cells, start=1):
+        kind = cell.get("cell_type")
+        src = _nb_text(cell.get("source")).rstrip()
+        if kind == "markdown":
+            in_fence = False
+            for line in src.split("\n"):
+                if _FENCE_RE.match(line):
+                    in_fence = not in_fence
+                    add(idx, line)
+                    continue
+                m = None if in_fence else _HEADING_RE.match(line)
+                if m:
+                    flush()
+                    level, title = len(m.group(1)), m.group(2).strip()
+                    while stack and stack[-1][0] >= level:
+                        stack.pop()
+                    stack.append((level, title))
+                else:
+                    add(idx, line)
+        elif kind == "code":
+            if src.strip():
+                add(idx, f"```{lang}\n{src}\n```")
+            if config.IPYNB_INCLUDE_OUTPUTS:
+                out = _nb_outputs(cell.get("outputs"))
+                if out:
+                    add(idx, f"Keluaran:\n```\n{out}\n```")
+        # sel 'raw' diabaikan
+    flush()
+    doc.segments = segments
+
+
 _READERS: dict[str, Callable[[Path, Document], None]] = {
+    ".ipynb": _read_ipynb,
     ".md": _read_markdown,
     ".txt": _read_text,
     ".pdf": _read_pdf,
@@ -478,15 +587,26 @@ _READERS: dict[str, Callable[[Path, Document], None]] = {
 def read_document(ref: FileRef) -> Document:
     """Baca satu file. Tidak pernah raise: kegagalan masuk Document.error."""
     doc = Document(ref=ref, course=ref.course)
-    reader = _READERS.get(ref.ext)
-    if reader is None and ref.ext in config.TEXT_LIKE_EXTENSIONS:
+    path, ext = ref.path, ref.ext
+    target = config.LEGACY_CONVERT.get(ext)
+    if target:                         # .ppt/.doc: baca salinan hasil konversi (di cache)
+        try:
+            path = convert.convert_legacy(ref.path, ref.sha256, target)
+        except convert.ConvertError as e:
+            doc.error = str(e)
+            return doc
+        doc.warnings.append(f"dikonversi dari {ext} ke {target} lewat LibreOffice "
+                            "(tata letak bisa sedikit berbeda dari aslinya)")
+        ext = target
+    reader = _READERS.get(ext)
+    if reader is None and ext in config.TEXT_LIKE_EXTENSIONS:
         reader = _read_text
     if reader is None:
-        doc.error = f"format {ref.ext} tidak didukung"
+        doc.error = f"format {ext} tidak didukung"
         return doc
 
     try:
-        reader(ref.path, doc)
+        reader(path, doc)
     except ImportError as e:
         pkg = _PIP_NAMES.get(e.name or "", e.name or "?")
         doc.error = f"pustaka '{pkg}' belum terpasang (pip install {pkg})"

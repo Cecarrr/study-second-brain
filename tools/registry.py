@@ -10,7 +10,7 @@ from typing import Callable
 
 import config
 from providers.base import Message, ProviderError, ToolCall, ToolSpec
-from tools import knowledge, quiz, tasks
+from tools import knowledge, notes, quiz, tasks
 from tools.common import ToolContext, ToolError
 
 log = logging.getLogger(__name__)
@@ -57,6 +57,9 @@ class Registry:
                 (tasks.ADD_SPEC, tasks.add_task),
                 (tasks.LIST_SPEC, tasks.list_tasks),
                 (tasks.COMPLETE_SPEC, tasks.complete_task),
+                (tasks.UPDATE_SPEC, tasks.update_task),
+                (tasks.DELETE_SPEC, tasks.delete_task),
+                (notes.SPEC, notes.list_notes),
                 (quiz.SPEC, quiz.make_quiz),
             ]}
 
