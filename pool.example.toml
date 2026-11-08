@@ -1,0 +1,80 @@
+# pool.example.toml -> salin jadi pool.toml di ROOT proyek (sejajar config.py) (JANGAN di-commit; tambahkan ke .gitignore).
+# Yang perlu kamu isi hanya: daftar account (key + model) dan angka limit.
+# Sisanya (rotasi, deteksi kuota habis, reset harian, failover) dikerjakan kode.
+
+# Urutan prioritas chat: model yang pertama kali muncul di daftar account paling diutamakan,
+# dalam satu model account dicoba berurutan. Mau urutan eksplisit? Hilangkan tanda # di bawah.
+# chat_order = ["gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "meta-llama/llama-3.3-70b-instruct:free"]
+
+# Embedding: provider, model, dan dimensi diambil dari config.EMBEDDING (satu sumber kebenaran).
+# Hanya slot dengan provider+model itu yang dipakai embed(); model lain tidak ikut failover.
+# Bagian ini opsional, hanya untuk menyetel batching dan cara menghitung kuota.
+[embedding]
+batch_size = 20       # teks per request; sama dengan item_cap lama di embedder.py
+count      = "item"   # "item": kuota dihitung per TEKS (konservatif, seperti COUNT_PER_TEXT); "call": per request
+
+# Margin keamanan terhadap limit lokal. Jawaban server (429) tetap yang menentukan.
+[safety]
+rpm = 0.8     # 15 RPM -> dipakai 12
+tpm = 0.8
+rpd = 1.0     # 1.0 = kuras sampai habis. Mau menyisakan jatah? mis. 0.6
+
+[settings]
+max_wait_s  = 90    # bila semua slot sedang penuh sementara, tunggu maksimal segini sebelum menyerah
+max_attempts = 30
+
+# ---------- LIMIT PER MODEL (isi dari dashboard; angka di bawah contoh dari masterfile) ----------
+# Berlaku untuk semua account; bisa ditimpa per account lewat `limits = {...}`.
+[limits."gemini-3.1-flash-lite"]
+rpm = 15
+rpd = 500
+tpm = 250000
+
+[limits."gemini-3.5-flash-lite"]
+rpm = 15
+rpd = 500
+
+[limits."gemini-embedding-001"]
+rpm = 100       # CONTOH: cek dashboard
+rpd = 1000      # CONTOH: cek dashboard
+tpm = 30000     # CONTOH: cek dashboard
+
+[limits."meta-llama/llama-3.3-70b-instruct:free"]
+rpm = 20        # OpenRouter: kuota harian dibagi SEMUA model :free per account
+rpd = 50        # CONTOH: cek halaman limit OpenRouter; pastikan modelnya mendukung tools
+
+# ---------- ACCOUNT ----------
+# name     : label bebas (muncul di /usage dan log)
+# provider : gemini | openrouter | openai_compat (butuh base_url)
+# key_env  : nama variabel di .env  (atau pakai  key = "..." langsung; jangan di-commit)
+# project  : akun/key yang satu project Google berbagi kuota -> beri nilai project yang SAMA.
+#            Kosong = dianggap project sendiri.
+# chat     : model chat yang boleh dipakai account ini
+# embed    : model embedding (hanya yang cocok dengan [embedding] yang dipakai)
+# limits   : (opsional) timpa limit untuk account ini, mis. akun berbayar
+# enabled  : false untuk mematikan sementara tanpa menghapus
+# reset_tz : (opsional) zona waktu reset RPD; default per provider
+#
+# Catatan ketentuan: banyak project/akun hanya untuk menambah kuota gratis mungkin melanggar
+# ketentuan Google. Pakai yang memang milikmu dan baca ketentuannya dulu. Pool ini tidak
+# menyamarkan apa pun; ia hanya bergantian memakai key yang kamu daftarkan.
+
+[[account]]
+name     = "gmail-a"
+provider = "gemini"
+key_env  = "GEMINI_API_KEY"      # key yang sudah ada di .env-mu
+chat     = ["gemini-3.1-flash-lite", "gemini-3.5-flash-lite"]
+embed    = ["gemini-embedding-001"]
+
+[[account]]
+name     = "gmail-b"
+provider = "gemini"
+key_env  = "GEMINI_KEY_B"
+chat     = ["gemini-3.1-flash-lite", "gemini-3.5-flash-lite"]
+embed    = ["gemini-embedding-001"]
+
+[[account]]
+name     = "openrouter-1"
+provider = "openrouter"
+key_env  = "OPENROUTER_API_KEY"
+chat     = ["meta-llama/llama-3.3-70b-instruct:free"]

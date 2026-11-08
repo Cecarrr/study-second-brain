@@ -1,0 +1,10 @@
+.venv/
+.env
+__pycache__/
+*.pyc
+data/app.db
+data/materi/
+data/vectors*
+logs/
+pool.toml
+data/keypool.db
