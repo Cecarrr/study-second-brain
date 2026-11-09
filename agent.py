@@ -12,6 +12,7 @@ import config
 import grounding
 from prompts import build_system_prompt
 from providers.base import Message, ProviderError
+from tools.select import asked_clarification, groups_of, select_specs
 
 # Tool yang mengubah data. Setelah salah satunya jalan, hasil baca yang di-cache pada giliran
 # yang sama sudah basi; lihat pembersihan `done` di Agent.ask.
@@ -26,10 +27,12 @@ class Agent:
         self.courses_fn, self.today_fn = courses_fn or (lambda: []), today_fn
         self.notify = notify or (lambda s: None)
         self.history: list[Message] = []        # pasangan user/assistant dari giliran lama
+        self._last_groups: frozenset = frozenset()   # kelompok tool yang dipertahankan bila asisten bertanya balik
         self.style = "normal"                   # "normal" | "simple" (/mode)
 
     def reset(self) -> None:
         self.history.clear()
+        self._last_groups = frozenset()
 
     @staticmethod
     def _grounding_note(msgs, question: str, answer: str) -> str:
@@ -52,7 +55,12 @@ class Agent:
                                      style=self.style)
         user = Message.user(text)
         msgs = [Message.system(system), *self.history, user]
-        specs = self.reg.specs()
+        all_specs = self.reg.specs()
+        specs = (select_specs(text, self.reg, self._last_groups)
+                 if getattr(config, "TOOL_SUBSET", True) else all_specs)
+        widened = len(specs) == len(all_specs)  # True = sudah semua tool, tidak perlu melebar lagi
+        picked = None if widened else groups_of(s.name for s in specs) - {"pengetahuan"}
+        called: list[str] = []                  # tool yang dijalankan pada giliran ini
         done: dict[str, tuple[str, str]] = {}   # kunci panggilan -> (nama tool, hasil) pada giliran ini
 
         for _ in range(config.MAX_ITERATIONS):
@@ -61,11 +69,20 @@ class Agent:
             except ProviderError as e:
                 first = str(e).splitlines()[0][:200]
                 return f"Maaf, layanan model sedang tidak tersedia: {first}\nCoba lagi nanti atau cek /usage."
+            if resp.tool_calls and not widened:
+                sent, known = {s.name for s in specs}, set(self.reg.names)
+                if any(c.name in known and c.name not in sent for c in resp.tool_calls):
+                    # Model butuh tool yang tidak dikirim: buang respons ini, ulangi sekali dengan semua tool.
+                    specs, widened = all_specs, True
+                    continue
             msgs.append(resp.to_message())
             if not resp.tool_calls:
                 answer = resp.text or "(model tidak memberi jawaban; coba ulangi pertanyaannya)"
                 self.history += [user, Message.assistant(answer)]
                 self._trim()
+                # Bila jawabannya pertanyaan balik, giliran berikutnya masih butuh kelompok tool yang sama.
+                self._last_groups = (groups_of(called) or picked or frozenset()) \
+                    if asked_clarification(answer) else frozenset()
                 return answer + self._grounding_note(msgs, text, answer)
             for call in resp.tool_calls:
                 key = call.name + json.dumps(call.args, sort_keys=True, ensure_ascii=False)
@@ -75,6 +92,7 @@ class Agent:
                                              "atau jawab pengguna.", is_error=True))
                     continue
                 self.notify(f"  [{call.name}] {json.dumps(call.args, ensure_ascii=False)[:120]}")
+                called.append(call.name)
                 res = self.reg.execute(call)
                 if call.name in WRITE_TOOLS:
                     # Data berubah: pembacaan lama tidak berlaku lagi, jadi model boleh memverifikasi

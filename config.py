@@ -109,6 +109,7 @@ LLM_MAX_OUTPUT_TOKENS: int | None = None
 # ---------------------------------------------------------------- Agent
 MAX_ITERATIONS = 6            # tool call per pesan pengguna
 HISTORY_MAX_TURNS = 6         # giliran terakhir yang disimpan
+TOOL_SUBSET = True            # kirim hanya tool yang relevan per pesan (tools/select.py); False = semua tool
 
 # ---------------------------------------------------------------- RAG
 # Ukuran chunk: konten baru <= CHUNK_SIZE; dengan overlap ukuran akhir
