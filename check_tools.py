@@ -1,4 +1,4 @@
-"""Uji 9 tool tanpa API (embedding dan LLM palsu, DB dan catatan sementara).
+"""Uji 11 tool tanpa API (embedding dan LLM palsu, DB dan catatan sementara).
 
   python check_tools.py          -> semua uji offline (0 request)
   python check_tools.py --live   -> tambahan: search_knowledge dan make_quiz dengan indeks dan model asli
@@ -145,8 +145,8 @@ def main():
     check(err and "query" in out, "parameter wajib hilang")
     out, _ = call(reg, "search_knowledge", query="3NF", top_k="99", ngawur="x")
     check("Error" not in out, "argumen asing dibuang, top_k dibatasi")
-    check(len(reg.names) == 9 and {"update_task", "delete_task", "list_notes"} <= set(reg.names),
-          "9 tool terdaftar (termasuk update_task, delete_task, list_notes)")
+    check(len(reg.names) == 11 and {"update_task", "delete_task", "list_notes", "update_note", "delete_note"} <= set(reg.names),
+          "11 tool terdaftar (termasuk update_note, delete_note)")
 
     def boom(msgs, tools=None):
         raise ProviderError("Semua slot chat habis\nlaporan panjang")
@@ -188,7 +188,7 @@ def main():
           call(reg, "list_tasks", status="all")[0].count("\n#") == n_before,
           "kandidat ganda -> tidak ada yang dihapus")
     out, err = call(reg, "delete_task", title="evaluasi laporan akhir")
-    check(not err and "dihapus permanen" in out, "hapus lewat kata kunci judul: " + out[:50])
+    check(not err and "tempat sampah" in out, "hapus lewat kata kunci judul: " + out[:50])
     check("Evaluasi laporan akhir" not in call(reg, "list_tasks", status="all")[0], "tugas benar-benar hilang")
     out, err = call(reg, "delete_task", task_id=999)
     check(err and "tidak ada" in out, "id tidak ada -> error")
@@ -215,12 +215,12 @@ def main():
     check("Senin 2026-11-09 (besok)" in p and 'due_date="2026-11-13"' in p and "2026-12-12" in p,
           "kalender dan contoh tanggal dihitung benar")
     approx = (len(p) + sum(len(s.description) + len(json.dumps(s.parameters)) for s in reg.specs())) // 3.5
-    print(f"  info: prompt + 9 tool ~ {int(approx)} token per request")
+    print(f"  info: prompt + 11 tool ~ {int(approx)} token per request")
     try:
         from google.genai import types
         for s in reg.specs():
             types.FunctionDeclaration(name=s.name, description=s.description, parameters_json_schema=s.parameters)
-        check(True, "schema 9 tool diterima SDK Gemini")
+        check(True, "schema 11 tool diterima SDK Gemini")
     except Exception as e:  # noqa: BLE001
         check(False, f"schema ditolak SDK: {e}")
 

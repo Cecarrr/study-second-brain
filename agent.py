@@ -9,12 +9,14 @@ import json
 from typing import Callable
 
 import config
+import grounding
 from prompts import build_system_prompt
 from providers.base import Message, ProviderError
 
 # Tool yang mengubah data. Setelah salah satunya jalan, hasil baca yang di-cache pada giliran
 # yang sama sudah basi; lihat pembersihan `done` di Agent.ask.
-WRITE_TOOLS = {"add_note", "add_task", "complete_task", "update_task", "delete_task"}
+WRITE_TOOLS = {"add_note", "add_task", "complete_task", "update_task", "delete_task",
+               "update_note", "delete_note"}
 
 
 class Agent:
@@ -24,9 +26,21 @@ class Agent:
         self.courses_fn, self.today_fn = courses_fn or (lambda: []), today_fn
         self.notify = notify or (lambda s: None)
         self.history: list[Message] = []        # pasangan user/assistant dari giliran lama
+        self.style = "normal"                   # "normal" | "simple" (/mode)
 
     def reset(self) -> None:
         self.history.clear()
+
+    @staticmethod
+    def _grounding_note(msgs, question: str, answer: str) -> str:
+        """Tandai angka/singkatan di jawaban yang tidak ada di sumber (hanya bila search_knowledge dipakai)."""
+        if getattr(config, "GROUNDING_CHECK", "flag") == "off":
+            return ""
+        if not any(m.role == "tool" and m.name == "search_knowledge" and not m.is_error for m in msgs):
+            return ""
+        bad = grounding.unsupported(answer, [m.content for m in msgs if m.role == "tool"], question)
+        return (f"\n\n(Periksa: {', '.join(bad[:6])} tidak ada di sumber yang ditemukan; "
+                "mungkin dugaan model.)") if bad else ""
 
     def _trim(self) -> None:
         keep = config.HISTORY_MAX_TURNS * 2
@@ -34,7 +48,8 @@ class Agent:
             self.history = self.history[-keep:]
 
     def ask(self, text: str) -> str:
-        system = build_system_prompt(self.today_fn() if self.today_fn else None, self.courses_fn())
+        system = build_system_prompt(self.today_fn() if self.today_fn else None, self.courses_fn(),
+                                     style=self.style)
         user = Message.user(text)
         msgs = [Message.system(system), *self.history, user]
         specs = self.reg.specs()
@@ -51,7 +66,7 @@ class Agent:
                 answer = resp.text or "(model tidak memberi jawaban; coba ulangi pertanyaannya)"
                 self.history += [user, Message.assistant(answer)]
                 self._trim()
-                return answer
+                return answer + self._grounding_note(msgs, text, answer)
             for call in resp.tool_calls:
                 key = call.name + json.dumps(call.args, sort_keys=True, ensure_ascii=False)
                 if key in done:

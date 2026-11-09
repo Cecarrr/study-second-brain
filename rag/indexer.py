@@ -7,8 +7,10 @@ supaya jumlah request sekecil mungkin.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import config
+from rag import convert
 from rag.chunker import chunk_document
 from rag.embedder import Embedder
 from rag.ingest import Document, discover_files, read_document
@@ -25,6 +27,8 @@ class SyncReport:
     failed: int = 0
     chunks: int = 0
     new_embeddings: int = 0
+    pruned: int = 0                                # file cache konversi yatim yang dihapus
+    pruned_bytes: int = 0
     skipped: list = field(default_factory=list)    # (path, alasan)
     notes: list = field(default_factory=list)      # peringatan per file
 
@@ -35,6 +39,8 @@ class SyncReport:
             hint = f" -> simpan ulang sebagai {LEGACY_HINT[ext]}" if ext in LEGACY_HINT else ""
             out.append(f"  [dilewati] {path}: {why}{hint}")
         out += [f"  [peringatan] {n}" for n in self.notes]
+        if self.pruned:
+            out.append(f"  Cache konversi dibersihkan: {self.pruned} file ({self.pruned_bytes / 1e6:.1f} MB)")
         out.append(f"Selesai: {self.indexed} diindeks ({self.chunks} chunk, "
                    f"{self.new_embeddings} teks baru di-embed), {self.unchanged} tidak berubah, "
                    f"{self.removed} dihapus, {self.failed} gagal, {len(self.skipped)} dilewati")
@@ -46,6 +52,9 @@ def sync_folder(root, source_type: str, store: VectorStore, embedder: Embedder,
     report = report or SyncReport()
     refs, skipped = discover_files(root, source_type)
     report.skipped += [(f"{source_type}/{p}", w) for p, w in skipped]
+    if source_type == "materi" and Path(root).is_dir():          # folder salah/tidak ada: jangan hapus apa pun
+        report.pruned, report.pruned_bytes = (a + b for a, b in zip(
+            (report.pruned, report.pruned_bytes), convert.prune_cache(convert.current_keys(root))))
 
     present = {r.doc_id for r in refs}
     for d in store.list_documents(source_type):

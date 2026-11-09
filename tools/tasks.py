@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from db.database import TaskConflict
+from db.database import TRASH_DAYS, TaskConflict
 from providers.base import ToolSpec
 from tools.common import ToolContext, ToolError
 
@@ -74,7 +74,7 @@ UPDATE_SPEC = ToolSpec(
 DELETE_SPEC = ToolSpec(
     name="delete_task",
     description=(
-        "Menghapus PERMANEN satu tugas dari daftar. GUNAKAN hanya bila pengguna jelas meminta "
+        "Menghapus satu tugas dari daftar (dipindah ke tempat sampah, bisa dipulihkan pengguna lewat /restore). GUNAKAN hanya bila pengguna jelas meminta "
         "menghapus, membatalkan, atau membuang tugas ('hapus tugas ...', 'batalkan deadline ...', "
         "'tugas itu salah catat'). JANGAN dipakai untuk tugas yang sudah dikerjakan ('sudah selesai', "
         "'sudah dikumpulkan' -> complete_task) dan jangan menghapus lebih dari yang diminta. Tentukan "
@@ -246,4 +246,5 @@ def delete_task(ctx: ToolContext, a: dict) -> str:
     gone = ctx.tasks.delete(t["id"])
     if gone is None:   # terhapus di antara pencarian dan penghapusan
         raise ToolError(f"Tugas #{t['id']} sudah tidak ada.")
-    return f"Tugas dihapus permanen: {fmt_task(gone, ctx.today())}"
+    return (f"Tugas dihapus: {fmt_task(gone, ctx.today())}. Tersimpan di tempat sampah selama "
+            f"{TRASH_DAYS} hari; pengguna bisa memulihkannya dengan /trash lalu /restore NOMOR.")

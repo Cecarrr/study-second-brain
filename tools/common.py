@@ -23,6 +23,7 @@ class ToolContext:
     notes_dir: Path = field(default_factory=lambda: config.NOTES_DIR)
     llm_chat: Callable | None = None    # llm_chat(messages, tools=None) -> ChatResponse
     log_path: Path | None = None        # None = logs/tools.jsonl
+    last_sources: list = field(default_factory=list)   # hasil search_knowledge terakhir (/source N)
 
     def today(self) -> date:
         return self.tasks.today()

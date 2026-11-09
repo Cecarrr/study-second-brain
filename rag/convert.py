@@ -9,11 +9,14 @@ bentrok bila LibreOffice sedang terbuka (tanpa ini perintah headless sering diam
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
+import re
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 import config
@@ -86,3 +89,49 @@ def convert_legacy(src: Path, sha256: str, target_ext: str) -> Path:
         os.replace(part, out)                        # atomik: cache tidak pernah berisi file separuh
     log.info("Dikonversi %s -> %s", src.name, out.name)
     return out
+
+
+# ---------------------------------------------------------------- pembersihan cache
+_CACHE_NAME = re.compile(r"^[0-9a-f]{16}\.(pptx|docx)$")      # pola nama yang dibuat convert_legacy
+
+
+def current_keys(root) -> set[str]:
+    """Kunci cache (sha256[:16]) dari SEMUA file .ppt/.doc yang ada sekarang di `root`.
+    Dihitung dari disk, bukan dari hasil discover_files, supaya cache tidak terhapus hanya karena
+    LibreOffice sedang tidak ditemukan."""
+    keys = set()
+    for p in Path(root).rglob("*"):
+        if p.is_file() and p.suffix.lower() in config.LEGACY_CONVERT and not p.name.startswith((".", "~$")):
+            h = hashlib.sha256()
+            with open(p, "rb") as f:
+                for blk in iter(lambda: f.read(1 << 20), b""):
+                    h.update(blk)
+            keys.add(h.hexdigest()[:16])
+    return keys
+
+
+def prune_cache(keep: set[str], part_max_age_s: int = 3600) -> tuple[int, int]:
+    """Hapus hasil konversi yang sumbernya sudah dihapus/berubah (kuncinya tidak ada di `keep`),
+    plus sisa *.part yang lama. File dengan nama lain tidak disentuh. -> (jumlah file, byte)."""
+    cache = Path(config.CONVERT_CACHE_DIR)
+    if not cache.is_dir():
+        return 0, 0
+    n = size = 0
+    for f in cache.iterdir():
+        if not f.is_file():
+            continue
+        if f.name.endswith(".part"):
+            stale = time.time() - f.stat().st_mtime > part_max_age_s
+        else:
+            stale = bool(_CACHE_NAME.match(f.name)) and f.stem not in keep
+        if not stale:
+            continue
+        try:
+            sz = f.stat().st_size
+            f.unlink()
+        except OSError:
+            continue
+        n, size = n + 1, size + sz
+    if n:
+        log.info("Cache konversi dibersihkan: %d file, %.1f MB", n, size / 1e6)
+    return n, size

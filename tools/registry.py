@@ -10,7 +10,10 @@ from typing import Callable
 
 import config
 from providers.base import Message, ProviderError, ToolCall, ToolSpec
+import privacy
+from agent import WRITE_TOOLS
 from tools import knowledge, notes, quiz, tasks
+from undo import Journal
 from tools.common import ToolContext, ToolError
 
 log = logging.getLogger(__name__)
@@ -50,6 +53,7 @@ def coerce_args(spec: ToolSpec, raw: dict | None) -> dict:
 class Registry:
     def __init__(self, ctx: ToolContext):
         self.ctx = ctx
+        self.journal = Journal()
         self._tools: dict[str, tuple[ToolSpec, Callable]] = {
             s.name: (s, h) for s, h in [
                 (knowledge.SEARCH_SPEC, knowledge.search_knowledge),
@@ -60,6 +64,8 @@ class Registry:
                 (tasks.UPDATE_SPEC, tasks.update_task),
                 (tasks.DELETE_SPEC, tasks.delete_task),
                 (notes.SPEC, notes.list_notes),
+                (notes.UPDATE_SPEC, notes.update_note),
+                (notes.DELETE_SPEC, notes.delete_note),
                 (quiz.SPEC, quiz.make_quiz),
             ]}
 
@@ -73,6 +79,7 @@ class Registry:
     def execute(self, call: ToolCall) -> Message:
         """Jalankan satu tool call -> Message role 'tool'. Tidak pernah raise."""
         t0, ok = time.time(), True
+        before = self.journal.snapshot(self.ctx) if call.name in WRITE_TOOLS else None
         entry = self._tools.get(call.name)
         if entry is None:
             out, ok = (f"Tool '{call.name}' tidak ada. Tool yang tersedia: {', '.join(self.names)}.", False)
@@ -89,17 +96,22 @@ class Registry:
             except Exception as e:  # noqa: BLE001
                 log.exception("Tool %s gagal", call.name)
                 out, ok = f"Error tak terduga: {type(e).__name__}: {e}", False
+        if before is not None and ok and self.journal.snapshot(self.ctx) != before:
+            self.journal.push(f"{call.name} {json.dumps(call.args, ensure_ascii=False)[:80]}", before)
         self._log(call, ok, out, time.time() - t0)
         return Message.tool(call, out, is_error=not ok)
 
     def _log(self, call: ToolCall, ok: bool, out: str, secs: float) -> None:
         try:
+            red = privacy.mode() != "off"
+            redact_obj = privacy.redact_obj
             path = self.ctx.log_path or (config.LOG_DIR / "tools.jsonl")
             Path(path).parent.mkdir(parents=True, exist_ok=True)
             with open(path, "a", encoding="utf-8") as f:
                 f.write(json.dumps({"t": datetime.now().isoformat(timespec="seconds"), "tool": call.name,
-                                    "args": call.args, "ok": ok, "ms": int(secs * 1000),
-                                    "out": out[:300]}, ensure_ascii=False) + "\n")
+                                    "args": redact_obj(call.args) if red else call.args, "ok": ok,
+                                    "ms": int(secs * 1000),
+                                    "out": (redact_obj(out) if red else out)[:300]}, ensure_ascii=False) + "\n")
         except OSError:
             pass
 

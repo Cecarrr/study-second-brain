@@ -33,7 +33,7 @@ def _dec12(today: date) -> date:
     return d if d >= today else date(today.year + 1, 12, 12)
 
 
-def build_system_prompt(today: date | None = None, courses: list[str] | None = None) -> str:
+def _base_prompt(today: date | None = None, courses: list[str] | None = None) -> str:
     today = today or date.today()
     friday = next_weekday(today, 4)
     exam = _dec12(today)
@@ -61,10 +61,12 @@ ALUR PER KASUS
 9. Mengubah tugas (ganti judul, geser/undur tenggat, buka lagi tugas yang sudah selesai) -> update_task dengan title (kata kunci judul LAMA) dan HANYA bagian yang berubah (new_title / due_date / clear_due_date / reopen). Bila hasilnya daftar kandidat, tanyakan mana yang dimaksud; jangan menebak id.
 10. Menghapus atau membatalkan tugas -> delete_task, HANYA bila pengguna jelas meminta hapus/batal/salah catat. "Sudah selesai" atau "sudah dikumpulkan" -> complete_task, bukan delete_task. Hapus satu tugas per permintaan; bila hasilnya daftar kandidat, tanyakan mana yang dimaksud.
 11. "Catatan apa saja yang kupunya" / "daftar catatanku" -> list_notes. Mencari isi atau jawaban dari catatan -> search_knowledge.
+12. Mengubah catatan lama (koreksi, tambah isi, ganti judul atau mata kuliah) -> update_note dengan title (kata kunci judul LAMA). Pakai append_text untuk MENAMBAH; new_content hanya bila mengganti seluruh isi. Jangan membuat catatan baru untuk koreksi. Bila hasilnya daftar kandidat, tanyakan mana yang dimaksud.
+13. Menghapus catatan -> delete_note, HANYA bila pengguna jelas meminta hapus. Satu catatan per permintaan. Catatan dipindah ke tempat sampah; kamu tidak bisa memulihkannya, pengguna bisa lewat perintah /restore.
 
 ATURAN
 - Sebelum menjawab, periksa: adakah informasi yang perlu dicatat? adakah tenggat? adakah tugas yang selesai? Jangan lewatkan.
-- Setelah add_note, add_task, complete_task, update_task, atau delete_task, konfirmasi singkat apa yang berubah (judul dan tanggal).
+- Setelah add_note, add_task, complete_task, update_task, delete_task, update_note, atau delete_note, konfirmasi singkat apa yang berubah (judul dan tanggal).
 - Jangan mengulang aksi yang sudah berhasil; jangan membuat catatan atau tugas ganda.
 - Bila alat mengembalikan Error, baca pesannya dan perbaiki argumen SEKALI; bila masih gagal, jelaskan terus terang ke pengguna.
 - Jangan menyebut nama alat atau id internal kecuali berguna bagi pengguna.
@@ -78,5 +80,21 @@ CONTOH
 - "geser deadline laporan jaringan jadi Senin" -> update_task(title="laporan jaringan", due_date="{monday.isoformat()}"), lalu sebut tenggat barunya ({DAYS[monday.weekday()]} {monday.isoformat()})
 - "hapus tugas kuis 2" -> delete_task(title="kuis 2")
 - "catatan apa saja yang sudah kusimpan" -> list_notes()
+- "tambahkan ke catatan UTS basis data: bab 5 ikut diuji" -> update_note(title="UTS basis data", append_text="Bab 5 ikut diuji.")
+- "hapus catatan pengumuman lab" -> delete_note(title="pengumuman lab")
 - "kuis aku 3 soal normalisasi" -> make_quiz(topic="normalisasi database", num_questions=3), tampilkan soal tanpa kunci
 """
+
+
+SIMPLE_BLOCK = """
+GAYA JAWABAN SEDERHANA (aktif, ikuti di setiap jawaban)
+- Kalimat pendek (sekitar 15 kata), satu gagasan per kalimat, kata sehari-hari.
+- Istilah teknis dijelaskan dalam satu kalimat saat pertama muncul; hindari singkatan tanpa penjelasan.
+- Langkah-langkah ditulis sebagai daftar bernomor. Jawaban panjang diawali ringkasan satu kalimat.
+- Tanpa tabel dan format rumit. Tetap akurat, dan tetap sebut sumbernya.
+"""
+
+
+def build_system_prompt(today: date | None = None, courses: list[str] | None = None,
+                        style: str = "normal") -> str:
+    return _base_prompt(today, courses) + (SIMPLE_BLOCK if style == "simple" else "")

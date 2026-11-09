@@ -1,10 +1,11 @@
 """SQLite untuk tugas kuliah (data/app.db)."""
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 from contextlib import closing
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Callable
 
@@ -21,7 +22,16 @@ CREATE TABLE IF NOT EXISTS tasks (
     created_at TEXT NOT NULL,
     done_at TEXT);
 CREATE INDEX IF NOT EXISTS idx_tasks_status_due ON tasks(status, due_date);
+CREATE TABLE IF NOT EXISTS trash (            -- tempat sampah: tugas dan catatan terhapus
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL,                        -- task | note
+    label TEXT NOT NULL,                       -- judul untuk ditampilkan
+    payload TEXT NOT NULL,                     -- JSON: tugas = barisnya; catatan = {file, content}
+    deleted_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL);
 """
+
+TRASH_DAYS = int(getattr(config, "TRASH_RETENTION_DAYS", 30))   # lama sampah disimpan sebelum dibuang
 
 
 def norm(s: str | None) -> str:
@@ -54,6 +64,7 @@ class TaskDB:
         self.today = today_fn or date.today
         with closing(self._conn()) as c, c:
             c.executescript(SCHEMA)
+            c.execute("DELETE FROM trash WHERE expires_at < ?", (self._now(),))   # buang yang kedaluwarsa
 
     def _conn(self) -> sqlite3.Connection:
         c = sqlite3.connect(str(self.path))
@@ -117,13 +128,87 @@ class TaskDB:
             return old, new
 
     def delete(self, task_id: int) -> dict | None:
-        """Hapus permanen. Kembalikan tugas yang dihapus, atau None bila id tidak ada."""
+        """Pindahkan ke tempat sampah (bisa dipulihkan TRASH_DAYS hari). Kembalikan tugasnya,
+        atau None bila id tidak ada."""
         with closing(self._conn()) as c, c:
             r = c.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
             if r is None:
                 return None
+            row = dict(r)
+            self._trash_insert(c, "task", row["title"], row)
             c.execute("DELETE FROM tasks WHERE id=?", (task_id,))
-            return dict(r)
+            return row
+
+    # ------------------------------------------------------------ potret untuk /undo
+    def dump_state(self) -> dict:
+        with closing(self._conn()) as c:
+            return {"tasks": [dict(r) for r in c.execute("SELECT * FROM tasks ORDER BY id")],
+                    "trash": [dict(r) for r in c.execute("SELECT * FROM trash ORDER BY id")]}
+
+    def load_state(self, state: dict) -> None:
+        """Ganti isi tabel tugas dan sampah dengan potret `dump_state`."""
+        with closing(self._conn()) as c, c:
+            for table in ("tasks", "trash"):
+                c.execute(f"DELETE FROM {table}")
+                for row in state[table]:
+                    cols = list(row)
+                    c.execute(f"INSERT INTO {table}({','.join(cols)}) VALUES ({','.join(':' + k for k in cols)})", row)
+
+    # ------------------------------------------------------------ tempat sampah
+    def _trash_insert(self, c: sqlite3.Connection, kind: str, label: str, payload: dict) -> int:
+        now = datetime.now()
+        cur = c.execute(
+            "INSERT INTO trash(kind, label, payload, deleted_at, expires_at) VALUES (?,?,?,?,?)",
+            (kind, label, json.dumps(payload, ensure_ascii=False), now.isoformat(timespec="seconds"),
+             (now + timedelta(days=TRASH_DAYS)).isoformat(timespec="seconds")))
+        return cur.lastrowid
+
+    def trash_put(self, kind: str, label: str, payload: dict) -> int:
+        with closing(self._conn()) as c, c:
+            return self._trash_insert(c, kind, label, payload)
+
+    def trash_list(self) -> list[dict]:
+        with closing(self._conn()) as c:
+            return [dict(r) for r in c.execute(
+                "SELECT id, kind, label, deleted_at, expires_at FROM trash "
+                "WHERE expires_at >= ? ORDER BY id DESC", (self._now(),))]
+
+    def trash_get(self, trash_id: int) -> dict | None:
+        with closing(self._conn()) as c:
+            r = c.execute("SELECT * FROM trash WHERE id=?", (trash_id,)).fetchone()
+        if r is None:
+            return None
+        d = dict(r)
+        d["payload"] = json.loads(d["payload"])
+        return d
+
+    def trash_remove(self, trash_id: int) -> None:
+        with closing(self._conn()) as c, c:
+            c.execute("DELETE FROM trash WHERE id=?", (trash_id,))
+
+    def trash_empty(self) -> int:
+        with closing(self._conn()) as c, c:
+            return c.execute("DELETE FROM trash").rowcount
+
+    def restore_task(self, trash_id: int) -> dict | None:
+        """Pulihkan tugas dari sampah (id lama dipakai lagi bila masih bebas). None bila tidak ada."""
+        item = self.trash_get(trash_id)
+        if item is None or item["kind"] != "task":
+            return None
+        t = item["payload"]
+        with closing(self._conn()) as c, c:
+            taken = c.execute("SELECT 1 FROM tasks WHERE id=?", (t["id"],)).fetchone()
+            cols = ["title", "due_date", "course", "notes", "status", "created_at", "done_at"]
+            vals = [t.get(k) for k in cols]
+            if taken:
+                cur = c.execute(f"INSERT INTO tasks({','.join(cols)}) VALUES ({','.join('?' * len(cols))})", vals)
+                new_id = cur.lastrowid
+            else:
+                c.execute(f"INSERT INTO tasks(id,{','.join(cols)}) VALUES (?,{','.join('?' * len(cols))})",
+                          [t["id"], *vals])
+                new_id = t["id"]
+            c.execute("DELETE FROM trash WHERE id=?", (trash_id,))
+            return dict(c.execute("SELECT * FROM tasks WHERE id=?", (new_id,)).fetchone())
 
     # ------------------------------------------------------------ baca
     def get(self, task_id: int) -> dict | None:

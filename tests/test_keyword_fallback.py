@@ -166,7 +166,7 @@ class RetrieverFallbackTests(unittest.TestCase):
     def test_embedding_sehat_memakai_vektor(self):
         emb, r = self.make(fail=False)
         res = r.search("normalisasi")
-        self.assertEqual(res.mode, "vector")
+        self.assertIn(res.mode, ("vector", "hybrid"))
         self.assertTrue(res.hits)
         self.assertNotIn(KEYWORD_NOTE, res.format())
 
@@ -201,7 +201,7 @@ class RetrieverFallbackTests(unittest.TestCase):
         emb.fail = False
         self.clock.t += 121
         res = r.search("normalisasi")
-        self.assertEqual(res.mode, "vector")
+        self.assertIn(res.mode, ("vector", "hybrid"))
         self.assertEqual(emb.calls, 2)
 
     def test_fallback_dimatikan_error_diteruskan(self):

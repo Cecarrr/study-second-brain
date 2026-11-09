@@ -152,7 +152,7 @@ class DeleteTaskTests(Base):
     def test_hapus_by_title(self):
         t, _ = self.db.add("Kuis 2", "2026-11-12")
         out = tasks.delete_task(self.ctx, {"title": "kuis 2"})
-        self.assertIn("dihapus permanen", out)
+        self.assertIn("tempat sampah", out)
         self.assertIsNone(self.db.get(t["id"]))
 
     def test_kandidat_ganda_tidak_menghapus(self):
@@ -177,7 +177,7 @@ class DeleteTaskTests(Base):
 class RegistryTests(Base):
     def test_sembilan_tool_terdaftar_dan_skema_valid(self):
         reg = build_registry(self.ctx)
-        self.assertEqual(len(reg.names), 9)
+        self.assertEqual(len(reg.names), 11)
         for need in ("update_task", "delete_task", "list_notes"):
             self.assertIn(need, reg.names)
         for spec in reg.specs():

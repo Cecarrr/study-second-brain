@@ -19,6 +19,27 @@ from rag.store import Hit, VectorStore
 
 log = logging.getLogger(__name__)
 
+
+def rrf_fuse(vec_hits: list[Hit], kw_hits: list[Hit], k: int, c: int = 60) -> list[Hit]:
+    """Reciprocal Rank Fusion: gabungkan peringkat vektor dan BM25. Hit hasil gabungan membawa
+    metadata["_via"] = "vec" | "kw" | "vec+kw"; skor = cosine bila ada, 0.0 untuk hasil kata kunci saja."""
+    score: dict[str, float] = {}
+    pick: dict[str, Hit] = {}
+    via: dict[str, set] = {}
+    for tag, hits in (("vec", vec_hits), ("kw", kw_hits)):
+        for rank, h in enumerate(hits):
+            score[h.id] = score.get(h.id, 0.0) + 1.0 / (c + rank + 1)
+            via.setdefault(h.id, set()).add(tag)
+            if tag == "vec" or h.id not in pick:
+                pick[h.id] = h
+    out = []
+    for hid in sorted(score, key=lambda i: -score[i])[:k]:
+        h = pick[hid]
+        v = "+".join(t for t in ("vec", "kw") if t in via[hid])
+        out.append(Hit(h.id, h.score if "vec" in via[hid] else 0.0, h.text, h.header,
+                       {**h.metadata, "_via": v}))
+    return out
+
 KEYWORD_NOTE = (
     "(Mode kata kunci: pencarian makna sedang tidak tersedia, jadi hanya kata yang sama persis "
     "yang cocok. Query bahasa lain atau sinonim bisa gagal; bila hasilnya kurang, coba istilah "
@@ -48,7 +69,9 @@ class SearchResult:
             heading = h.metadata.get("heading")
             head = f" | {heading}" if heading else ""
             # Skor BM25 tidak sebanding dengan cosine; di mode kata kunci cukup urutannya.
-            tag = "kata kunci" if keyword else f"skor {h.score:.2f}"
+            via = h.metadata.get("_via")
+            tag = ("kata kunci" if keyword or via == "kw" else
+                   f"skor {h.score:.2f}" + (" + kata kunci" if via == "vec+kw" else ""))
             blocks.append(f"[{i}] {tag} | {where}{head}\n{h.text}")
         return note + "\n\n".join(blocks)
 
@@ -89,10 +112,17 @@ class Retriever:
                 log.warning("Embedding query gagal, pakai pencarian kata kunci: %s", reason)
             else:
                 self._embed_down_until = 0.0
-                hits = self.store.search(qvec, k=k, min_score=-1.0,
+                pool = k * 3 if getattr(config, "HYBRID_SEARCH", True) else k
+                hits = self.store.search(qvec, k=pool, min_score=-1.0,
                                          course=course, source_type=source_type)
                 best = hits[0].score if hits else None
-                return SearchResult(query, [h for h in hits if h.score >= ms], best, ms)
+                vec_hits = [h for h in hits if h.score >= ms]
+                if getattr(config, "HYBRID_SEARCH", True):
+                    kw = self.store.keyword_search(query, k=pool, course=course, source_type=source_type)
+                    if kw:
+                        fused = rrf_fuse(vec_hits, kw, k, int(getattr(config, "RRF_K", 60)))
+                        return SearchResult(query, fused, best, ms, mode="hybrid")
+                return SearchResult(query, vec_hits[:k], best, ms)
 
         hits = self.store.keyword_search(query, k=k, course=course, source_type=source_type)
         return SearchResult(query, hits, None, ms, mode="keyword", fallback_reason=reason)
