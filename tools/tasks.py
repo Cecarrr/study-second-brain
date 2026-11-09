@@ -109,16 +109,27 @@ def fmt_task(t: dict, today: date) -> str:
     return f"#{t['id']} [{mark}] {t['title']} | {due_text(t['due_date'], today)}{course}{notes}"
 
 
-def _check_due(due: str, today: date) -> str:
-    """Validasi tenggat dari LLM; kembalikan string ISO yang sudah dinormalkan."""
+def _check_due(due: str, today: date, allow_rollover: bool = True) -> str:
+    """Validasi tenggat dari LLM; kembalikan string ISO yang sudah dinormalkan.
+    Jika tanggal di masa lalu dan allow_rollover aktif, coba majukan 1 tahun."""
     try:
         d = date.fromisoformat(due)
     except ValueError:
         raise ToolError(f"due_date '{due}' bukan format YYYY-MM-DD (contoh: {today + timedelta(days=5)}).")
+    
     if d < today:
-        raise ToolError(f"Tanggal {due} sudah lewat (hari ini {today.isoformat()}). Periksa lagi "
-                        "tanggalnya dari kalender di prompt sistem; bila pengguna memang bermaksud "
-                        "tanggal lampau, tanyakan dulu.")
+        if allow_rollover:
+            # Otomatis majukan 1 tahun bila jatuh di masa lalu (misal 1 November saat hari ini 8 November)
+            try:
+                d_next = date(d.year + 1, d.month, d.day)
+                if d_next >= today:
+                    return d_next.isoformat()
+            except ValueError:
+                pass
+        raise ToolError(
+            f"Tanggal {due} sudah lewat (hari ini {today.isoformat()}). "
+            f"Gunakan tahun berikutnya ({d.year + 1}-{d.month:02d}-{d.day:02d}) dan panggil add_task kembali."
+        )
     if d > today + timedelta(days=730):
         raise ToolError(f"Tanggal {due} terlalu jauh (hari ini {today.isoformat()}); kemungkinan salah tahun.")
     return d.isoformat()

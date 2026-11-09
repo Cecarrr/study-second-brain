@@ -67,12 +67,18 @@ class Agent:
             try:
                 resp = self.chat_fn(msgs, specs)
             except ProviderError as e:
+                err_msg = str(e).lower()
+                # Tangani kasus model mencoba memanggil tool di luar subset dan ditolak oleh provider API
+                if not widened and any(k in err_msg for k in ["tool", "function", "unknown", "not found", "invalid"]):
+                    specs, widened = all_specs, True
+                    continue
                 first = str(e).splitlines()[0][:200]
                 return f"Maaf, layanan model sedang tidak tersedia: {first}\nCoba lagi nanti atau cek /usage."
+            
             if resp.tool_calls and not widened:
                 sent, known = {s.name for s in specs}, set(self.reg.names)
                 if any(c.name in known and c.name not in sent for c in resp.tool_calls):
-                    # Model butuh tool yang tidak dikirim: buang respons ini, ulangi sekali dengan semua tool.
+                    # Model butuh tool yang tidak dikirim: ulangi sekali dengan semua tool
                     specs, widened = all_specs, True
                     continue
             msgs.append(resp.to_message())
