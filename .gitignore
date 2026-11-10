@@ -1,10 +1,31 @@
+# lingkungan dan rahasia
 .venv/
 .env
+.env.*
+!.env.example
+pool.toml
+
+# python
 __pycache__/
 *.pyc
-data/app.db
-data/materi/
-data/vectors*
+.pytest_cache/
+
+# editor
+.vscode/
+
+# data pribadi dan hasil olahan: jangan di-commit
+data/*
+!data/.gitkeep
 logs/
-pool.toml
-data/keypool.db
+
+# SQLite beserta berkas pendampingnya
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+
+# hasil evaluasi dan berkas sementara
+hasil-eval*.md
+hasil-eval*.csv
+PATCH_*.md
+*.zip
