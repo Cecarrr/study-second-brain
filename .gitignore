@@ -14,8 +14,7 @@ __pycache__/
 .vscode/
 
 # data pribadi dan hasil olahan: jangan di-commit
-data/*
-!data/.gitkeep
+data/
 logs/
 
 # SQLite beserta berkas pendampingnya
