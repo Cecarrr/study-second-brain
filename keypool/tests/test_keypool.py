@@ -186,6 +186,8 @@ class PoolTests(unittest.TestCase):
             u2 = UsageStore(db, clock=clock.now)
             ok, wait, why = u2.check(r.pool.chat_slots[0], r.pool.safety, clock.now())
             self.assertFalse(ok)
+            r.usage.db.close()                                   # Windows: berkas terkunci selama koneksi terbuka
+            u2.db.close()
 
     def test_model_priority_over_account_order(self):
         r, *_ = make([acct("A", "kA", chat=("m1", "m2")), acct("B", "kB", chat=("m1", "m2"))])

@@ -234,8 +234,9 @@ class MockRunTests(unittest.TestCase):
     def test_error_tool_dihitung(self):
         (ideal,), _ = run_mock(scenarios=[es.BY_ID["tanggal-lampau"]])
         r = ideal.results[0]
-        self.assertEqual((r.status, r.tool_calls, r.tool_errors), (em.PASS, 2, 1))
-        self.assertAlmostEqual(ideal.tool_error_rate, 0.5)
+        # tanggal lampau kini dimajukan otomatis (dengan catatan), jadi panggilan pertama tidak error
+        self.assertEqual((r.status, r.tool_calls, r.tool_errors), (em.PASS, 2, 0))
+        self.assertEqual(ideal.tool_error_rate, 0.0)
 
     def test_anggaran_menghentikan_run(self):
         (ideal,), budget = run_mock(limit=5)
@@ -267,8 +268,10 @@ class ErrorHandlingTests(unittest.TestCase):
 
     def test_error_sementara_ditandai_error_dan_lanjut(self):
         rep = self.go(ServerError("503 sibuk", provider="fail"))
-        self.assertEqual([r.status for r in rep.results], [em.ERROR] * 4)
+        # 3 error beruntun -> model dihentikan, sisa skenario dilewati (hemat request)
+        self.assertEqual([r.status for r in rep.results], [em.ERROR] * 3 + [em.SKIP])
         self.assertIn("ServerError", rep.results[0].reason)
+        self.assertIn("beruntun", rep.results[3].reason)
         self.assertEqual(rep.count(em.FAIL), 0)
 
     def test_jeda_antar_request(self):

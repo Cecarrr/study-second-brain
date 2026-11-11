@@ -58,9 +58,11 @@ class Agent:
         all_specs = self.reg.specs()
         specs = (select_specs(text, self.reg, self._last_groups)
                  if getattr(config, "TOOL_SUBSET", True) else all_specs)
+        self._last_groups = frozenset()          # dikonsumsi; diisi lagi bila jawaban berupa pertanyaan balik
         widened = len(specs) == len(all_specs)  # True = sudah semua tool, tidak perlu melebar lagi
         picked = None if widened else groups_of(s.name for s in specs) - {"pengetahuan"}
         called: list[str] = []                  # tool yang dijalankan pada giliran ini
+        ambiguous: set[str] = set()             # tool tulis yang baru mengembalikan daftar kandidat
         done: dict[str, tuple[str, str]] = {}   # kunci panggilan -> (nama tool, hasil) pada giliran ini
 
         for _ in range(config.MAX_ITERATIONS):
@@ -97,6 +99,11 @@ class Agent:
                                              f"dengan hasil: {done[key][1][:200]}. Jangan diulang; lanjutkan "
                                              "atau jawab pengguna.", is_error=True))
                     continue
+                if call.name in ambiguous:
+                    msgs.append(Message.tool(call, "Hasil sebelumnya berupa daftar kandidat: pengguna harus memilih. "
+                                             "Jangan menebak atau memanggil lagi; tanyakan ke pengguna yang mana, "
+                                             "lalu tunggu jawabannya.", is_error=True))
+                    continue
                 self.notify(f"  [{call.name}] {json.dumps(call.args, ensure_ascii=False)[:120]}")
                 called.append(call.name)
                 res = self.reg.execute(call)
@@ -105,6 +112,8 @@ class Agent:
                     # (mis. list_tasks setelah complete_task). Panggilan tulis tetap diingat supaya
                     # tidak dieksekusi dua kali (catatan/tugas ganda, hapus ganda).
                     done = {k: v for k, v in done.items() if v[0] in WRITE_TOOLS}
+                if call.name in WRITE_TOOLS and "tanyakan ke pengguna" in res.content.lower():
+                    ambiguous.add(call.name)
                 done[key] = (call.name, res.content)
                 msgs.append(res)
         last = next((m.content for m in reversed(msgs) if m.role == "tool"), "")

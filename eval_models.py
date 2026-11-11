@@ -62,6 +62,9 @@ PASS, FAIL, ERROR, SKIP = "lulus", "gagal", "error", "lewat"
 
 
 # ---------------------------------------------------------------- anggaran, jeda, pencatat request
+ERROR_STREAK = 3          # berhenti menguji model setelah sekian error beruntun (hemat request)
+
+
 class BudgetExhausted(RateLimitError):
     """Anggaran --max-requests habis. Subclass RateLimitError(retryable=False), seperti PoolExhausted."""
 
@@ -252,6 +255,12 @@ class ModelReport:
         return self.count(PASS) / len(self.ran) if self.ran else None
 
     @property
+    def adj_rate(self) -> float | None:
+        """Lulus / (lulus + gagal + error): skenario yang error TIDAK dianggap lulus."""
+        n = self.count(PASS) + self.count(FAIL) + self.count(ERROR)
+        return self.count(PASS) / n if n else None
+
+    @property
     def avg_requests(self) -> float | None:
         return sum(r.requests for r in self.ran) / len(self.ran) if self.ran else None
 
@@ -348,6 +357,7 @@ def eval_model(model: str, scenarios: list[Scenario], provider_factory=make_prov
     meter = Meter(pacer_factory(model), budget)
     report = ModelReport(model)
     halted: str | None = None
+    streak = 0                                   # error beruntun (infrastruktur)
     prov = aux = None
     if not getattr(provider_factory, "per_scenario", False):
         prov, aux = provider_factory(model)
@@ -362,6 +372,9 @@ def eval_model(model: str, scenarios: list[Scenario], provider_factory=make_prov
                 r = run_scenario(sc, meter, Path(tmp) / f"{i:02d}")
                 if r.status == SKIP:
                     halted = r.reason
+                streak = streak + 1 if r.status == ERROR else 0
+                if streak >= ERROR_STREAK and not halted:
+                    halted = f"{streak} error beruntun ({r.reason[:70]}); model dilewati"
             report.results.append(r)
             if progress:
                 progress(model, r)
@@ -379,9 +392,10 @@ def _num(x: float | None, nd: int = 1, unit: str = "") -> str:
 
 def summary_rows(reports: list[ModelReport]) -> list[list[str]]:
     rows = []
-    for r in sorted(reports, key=lambda r: (-(r.pass_rate or 0), r.avg_requests or 99)):
+    for r in sorted(reports, key=lambda r: (-(r.adj_rate or 0), r.avg_requests or 99)):
         rows.append([r.model, str(r.count(PASS)), str(r.count(FAIL)), str(r.count(ERROR)), str(r.count(SKIP)),
-                     _pct(r.pass_rate), _num(r.avg_requests),
+                     _pct(r.pass_rate) + (f" ({r.count(PASS)}/{r.count(PASS) + r.count(FAIL) + r.count(ERROR)})"
+                                          if r.count(ERROR) else ""), _num(r.avg_requests),
                      f"{r.tool_errors}/{r.tool_calls} ({_pct(r.tool_error_rate)})", str(r.total_requests),
                      _num(r.avg_latency, 1, " dtk")])
     return rows

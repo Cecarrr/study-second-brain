@@ -109,6 +109,14 @@ def fmt_task(t: dict, today: date) -> str:
     return f"#{t['id']} [{mark}] {t['title']} | {due_text(t['due_date'], today)}{course}{notes}"
 
 
+def _rolled(orig: str | None, final: str | None) -> str:
+    """Kalimat pemberitahuan bila _check_due memajukan tahun; kosong bila tidak berubah."""
+    if orig and final and orig != final:
+        return (f" (CATATAN: tanggal {orig} sudah lewat, jadi tenggat dipakai tahun depan: {final}. "
+                "Sebutkan ini ke pengguna supaya bisa dikoreksi.)")
+    return ""
+
+
 def _check_due(due: str, today: date, allow_rollover: bool = True) -> str:
     """Validasi tenggat dari LLM; kembalikan string ISO yang sudah dinormalkan.
     Jika tanggal di masa lalu dan allow_rollover aktif, coba majukan 1 tahun."""
@@ -128,7 +136,7 @@ def _check_due(due: str, today: date, allow_rollover: bool = True) -> str:
                 pass
         raise ToolError(
             f"Tanggal {due} sudah lewat (hari ini {today.isoformat()}). "
-            f"Gunakan tahun berikutnya ({d.year + 1}-{d.month:02d}-{d.day:02d}) dan panggil add_task kembali."
+            "Periksa tanggalnya; bila memang yang dimaksud, tanyakan ke pengguna tahun yang benar."
         )
     if d > today + timedelta(days=730):
         raise ToolError(f"Tanggal {due} terlalu jauh (hari ini {today.isoformat()}); kemungkinan salah tahun.")
@@ -140,10 +148,11 @@ def add_task(ctx: ToolContext, a: dict) -> str:
     today = ctx.today()
     due = _check_due(a["due_date"], today) if a.get("due_date") else None
     course, _ = ctx.resolve_course(a.get("course"))
+    note = _rolled(a.get("due_date"), due)
     t, created = ctx.tasks.add(title, due, course, a.get("notes"))
     if not created:
-        return f"Tugas yang sama sudah ada, tidak dibuat ulang: {fmt_task(t, today)}"
-    return f"Tugas ditambahkan: {fmt_task(t, today)}"
+        return f"Tugas yang sama sudah ada, tidak dibuat ulang: {fmt_task(t, today)}" + note
+    return f"Tugas ditambahkan: {fmt_task(t, today)}" + note
 
 
 def list_tasks(ctx: ToolContext, a: dict) -> str:
@@ -219,10 +228,12 @@ def update_task(ctx: ToolContext, a: dict) -> str:
     if a.get("due_date") and a.get("clear_due_date"):
         raise ToolError("Pilih salah satu: due_date (tenggat baru) atau clear_due_date (hapus tenggat).")
     changes: dict = {}
+    note = ""
     if a.get("new_title"):
         changes["title"] = a["new_title"].strip()
     if a.get("due_date"):
         changes["due_date"] = _check_due(a["due_date"], today)
+        note = _rolled(a["due_date"], changes["due_date"])
     elif a.get("clear_due_date"):
         changes["due_date"] = None
     if a.get("course"):
@@ -246,8 +257,8 @@ def update_task(ctx: ToolContext, a: dict) -> str:
     diff = [f"{_FIELD_LABEL[k]}: {_show(k, old[k])} -> {_show(k, new[k])}"
             for k in _FIELD_LABEL if old[k] != new[k]]
     if not diff:
-        return f"Tidak ada yang berubah (nilainya sudah sama): {fmt_task(new, today)}"
-    return f"Tugas #{new['id']} diperbarui ({'; '.join(diff)}): {fmt_task(new, today)}"
+        return f"Tidak ada yang berubah (nilainya sudah sama): {fmt_task(new, today)}" + note
+    return f"Tugas #{new['id']} diperbarui ({'; '.join(diff)}): {fmt_task(new, today)}" + note
 
 
 def delete_task(ctx: ToolContext, a: dict) -> str:

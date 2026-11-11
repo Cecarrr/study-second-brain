@@ -30,6 +30,7 @@ GROUPS: dict[str, tuple[str, ...]] = {
 }
 ALWAYS = ("pengetahuan",)           # kelompok yang selalu ikut
 LONG_TEXT = 400                     # pesan lebih panjang dari ini -> semua tool
+SHORT_REPLY = 60                    # balasan sependek ini tanpa kata kunci melanjutkan kelompok sebelumnya
 
 
 def _rx(*alts: str) -> re.Pattern:
@@ -99,8 +100,13 @@ def select_groups(text: str, available: set[str], carry=()) -> frozenset[str] | 
     giliran sebelumnya (asisten bertanya klarifikasi)."""
     if len(text) > LONG_TEXT:
         return None
-    g = (match_groups(text, carry) | set(carry)) & available
-    return frozenset(g) if g else None
+    matched = match_groups(text, carry) & available
+    kept = set(carry) & available
+    if matched:
+        return frozenset(matched | kept)
+    # Tanpa kata kunci: balasan pendek ("ya yang pertama") melanjutkan giliran sebelumnya; pesan lain yang
+    # tak dikenali -> SEMUA tool, supaya model tidak terkurung di kelompok lama (mis. kuis tak tersedia).
+    return frozenset(kept) if kept and len(text) <= SHORT_REPLY else None
 
 
 def select_specs(text: str, reg, last_groups=None) -> list:

@@ -103,7 +103,7 @@ class UpdateTaskTests(Base):
             tasks.update_task(self.ctx, {"title": "laporan", "due_date": "2026-11-20", "clear_due_date": True})
 
     def test_tanggal_lampau_dan_format_salah_ditolak(self):
-        for bad in ("2026-11-01", "besok", "2031-01-01"):
+        for bad in ("2024-11-01", "besok", "2031-01-01"):
             with self.assertRaises(ToolError, msg=bad):
                 tasks.update_task(self.ctx, {"title": "laporan", "due_date": bad})
         self.assertEqual(self.db.get(self.t["id"])["due_date"], "2026-11-13")
@@ -279,8 +279,9 @@ class SummaryTests(Base):
 
     def test_data_tenggat_rusak_tidak_menjatuhkan_ringkasan(self):
         import sqlite3
+        from contextlib import closing
         self.db.add("Normal", "2026-11-10")
-        with sqlite3.connect(self.db.path) as c:
+        with closing(sqlite3.connect(self.db.path)) as c, c:      # `with conn` saja tidak menutup koneksi
             c.execute("INSERT INTO tasks(title, due_date, created_at) VALUES ('Rusak', 'bukan-tanggal', 'x')")
         self.assertIn("1 tanpa tenggat", build_daily_summary(self.db))
 
