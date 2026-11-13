@@ -22,6 +22,16 @@ CREATE TABLE IF NOT EXISTS tasks (
     created_at TEXT NOT NULL,
     done_at TEXT);
 CREATE INDEX IF NOT EXISTS idx_tasks_status_due ON tasks(status, due_date);
+CREATE TABLE IF NOT EXISTS schedule (        -- jadwal kuliah: satu baris = satu sesi mingguan
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    course TEXT NOT NULL, code TEXT, class_name TEXT,   -- mata kuliah, kode MK, kelas (A/TI-3B)
+    semester INTEGER, term TEXT, sks INTEGER,            -- semester mahasiswa, tahun ajaran, SKS
+    lecturer TEXT,
+    weekday INTEGER NOT NULL,                            -- 0=Senin .. 6=Minggu
+    start_time TEXT NOT NULL, end_time TEXT NOT NULL,    -- HH:MM
+    room TEXT, kind TEXT, notes TEXT,
+    active INTEGER NOT NULL DEFAULT 1,                   -- 0 = diarsipkan
+    created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS trash (            -- tempat sampah: tugas dan catatan terhapus
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     kind TEXT NOT NULL,                        -- task | note
@@ -58,10 +68,12 @@ def title_matches(words: list[str], title: str) -> bool:
 
 
 class TaskDB:
-    def __init__(self, path: str | Path | None = None, today_fn: Callable[[], date] | None = None):
+    def __init__(self, path: str | Path | None = None, today_fn: Callable[[], date] | None = None,
+                 now_fn: Callable[[], datetime] | None = None):
         self.path = Path(path or config.DB_PATH)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.today = today_fn or date.today
+        self.now_fn = now_fn or (lambda: datetime.combine(self.today(), datetime.now().time()))
         with closing(self._conn()) as c, c:
             c.executescript(SCHEMA)
             c.execute("DELETE FROM trash WHERE expires_at < ?", (self._now(),))   # buang yang kedaluwarsa
@@ -139,18 +151,105 @@ class TaskDB:
             c.execute("DELETE FROM tasks WHERE id=?", (task_id,))
             return row
 
+    # ------------------------------------------------------------ jadwal kuliah
+    SCHED_FIELDS = ("course", "code", "class_name", "semester", "term", "sks", "lecturer", "weekday",
+                    "start_time", "end_time", "room", "kind", "notes", "active")
+
+    def sched_add(self, row: dict) -> dict:
+        data = {k: row.get(k) for k in self.SCHED_FIELDS if row.get(k) is not None}
+        data.setdefault("active", 1)
+        data["created_at"] = self._now()
+        with closing(self._conn()) as c, c:
+            cur = c.execute(f"INSERT INTO schedule({','.join(data)}) VALUES ({','.join('?' * len(data))})",
+                            list(data.values()))
+            return dict(c.execute("SELECT * FROM schedule WHERE id=?", (cur.lastrowid,)).fetchone())
+
+    def sched_get(self, sid: int) -> dict | None:
+        with closing(self._conn()) as c:
+            r = c.execute("SELECT * FROM schedule WHERE id=?", (sid,)).fetchone()
+            return dict(r) if r else None
+
+    def sched_list(self, weekday: int | None = None, course: str | None = None, semester: int | None = None,
+                   term: str | None = None, lecturer: str | None = None, active: bool | None = True) -> list[dict]:
+        where, args = [], []
+        for col, val in (("weekday", weekday), ("semester", semester)):
+            if val is not None:
+                where.append(f"{col}=?")
+                args.append(val)
+        if active is not None:
+            where.append("active=?")
+            args.append(1 if active else 0)
+        q = "SELECT * FROM schedule" + (" WHERE " + " AND ".join(where) if where else "") + \
+            " ORDER BY weekday, start_time, id"
+        with closing(self._conn()) as c:
+            rows = [dict(r) for r in c.execute(q, args)]
+        for key, val in (("term", term), ("lecturer", lecturer)):
+            if val:
+                rows = [r for r in rows if norm(val) in norm(r[key])]
+        if course:
+            w = norm(course)
+            rows = [r for r in rows if w in norm(r["course"]) or w == norm(r["code"])]
+        return rows
+
+    def sched_update(self, sid: int, changes: dict) -> dict | None:
+        data = {k: v for k, v in changes.items() if k in self.SCHED_FIELDS}
+        with closing(self._conn()) as c, c:
+            if c.execute("SELECT 1 FROM schedule WHERE id=?", (sid,)).fetchone() is None:
+                return None
+            if data:
+                c.execute(f"UPDATE schedule SET {','.join(k + '=?' for k in data)} WHERE id=?", [*data.values(), sid])
+            return dict(c.execute("SELECT * FROM schedule WHERE id=?", (sid,)).fetchone())
+
+    def sched_delete(self, sid: int) -> dict | None:
+        """Pindahkan ke tempat sampah (kind 'class'). None bila id tidak ada."""
+        with closing(self._conn()) as c, c:
+            r = c.execute("SELECT * FROM schedule WHERE id=?", (sid,)).fetchone()
+            if r is None:
+                return None
+            row = dict(r)
+            self._trash_insert(c, "class", row["course"], row)
+            c.execute("DELETE FROM schedule WHERE id=?", (sid,))
+            return row
+
+    def sched_courses(self) -> list[str]:
+        seen, out = set(), []
+        for r in self.sched_list():
+            if norm(r["course"]) not in seen:
+                seen.add(norm(r["course"]))
+                out.append(r["course"])
+        return out
+
+    def restore_class(self, trash_id: int) -> dict | None:
+        item = self.trash_get(trash_id)
+        if item is None or item["kind"] != "class":
+            return None
+        row = dict(item["payload"])
+        sid = row.pop("id", None)
+        row.pop("created_at", None)
+        with closing(self._conn()) as c, c:
+            taken = sid is not None and c.execute("SELECT 1 FROM schedule WHERE id=?", (sid,)).fetchone()
+            data = {k: row.get(k) for k in self.SCHED_FIELDS if row.get(k) is not None}
+            data["created_at"] = self._now()
+            if sid is not None and not taken:
+                data["id"] = sid
+            cur = c.execute(f"INSERT INTO schedule({','.join(data)}) VALUES ({','.join('?' * len(data))})",
+                            list(data.values()))
+            c.execute("DELETE FROM trash WHERE id=?", (trash_id,))
+            return dict(c.execute("SELECT * FROM schedule WHERE id=?", (cur.lastrowid,)).fetchone())
+
     # ------------------------------------------------------------ potret untuk /undo
     def dump_state(self) -> dict:
         with closing(self._conn()) as c:
             return {"tasks": [dict(r) for r in c.execute("SELECT * FROM tasks ORDER BY id")],
-                    "trash": [dict(r) for r in c.execute("SELECT * FROM trash ORDER BY id")]}
+                    "trash": [dict(r) for r in c.execute("SELECT * FROM trash ORDER BY id")],
+                    "schedule": [dict(r) for r in c.execute("SELECT * FROM schedule ORDER BY id")]}
 
     def load_state(self, state: dict) -> None:
         """Ganti isi tabel tugas dan sampah dengan potret `dump_state`."""
         with closing(self._conn()) as c, c:
-            for table in ("tasks", "trash"):
+            for table in ("tasks", "trash", "schedule"):
                 c.execute(f"DELETE FROM {table}")
-                for row in state[table]:
+                for row in state.get(table, []):
                     cols = list(row)
                     c.execute(f"INSERT INTO {table}({','.join(cols)}) VALUES ({','.join(':' + k for k in cols)})", row)
 

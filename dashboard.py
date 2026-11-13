@@ -66,6 +66,7 @@ def build_dashboard(ctx=None, log_path=None, days: int = 7, usage_report=None) -
                     f"Tugas: {len(pend)} belum selesai ({len(late)} terlambat), "
                     f"{len(tasks) - len(pend)} selesai",
                     f"Catatan: {notes} | Tempat sampah: {len(ctx.tasks.trash_list())} item",
+                    f"Jadwal: {len(ctx.tasks.sched_list())} sesi aktif ({len(ctx.tasks.sched_courses())} mata kuliah)",
                     f"Indeks: {st['chunks']} chunk, dokumen {st['documents']}"]
         except Exception as e:  # noqa: BLE001
             out.append(f"(data tidak terbaca: {type(e).__name__}: {e})")

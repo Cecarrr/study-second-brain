@@ -17,7 +17,7 @@ from tools.select import asked_clarification, groups_of, select_specs
 # Tool yang mengubah data. Setelah salah satunya jalan, hasil baca yang di-cache pada giliran
 # yang sama sudah basi; lihat pembersihan `done` di Agent.ask.
 WRITE_TOOLS = {"add_note", "add_task", "complete_task", "update_task", "delete_task",
-               "update_note", "delete_note"}
+               "update_note", "delete_note", "add_class", "update_class", "delete_class"}
 
 
 class Agent:

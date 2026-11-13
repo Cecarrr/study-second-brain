@@ -1,4 +1,4 @@
-"""Uji 11 tool tanpa API (embedding dan LLM palsu, DB dan catatan sementara).
+"""Uji 15 tool tanpa API (embedding dan LLM palsu, DB dan catatan sementara).
 
   python check_tools.py          -> semua uji offline (0 request)
   python check_tools.py --live   -> tambahan: search_knowledge dan make_quiz dengan indeks dan model asli
@@ -145,8 +145,8 @@ def main():
     check(err and "query" in out, "parameter wajib hilang")
     out, _ = call(reg, "search_knowledge", query="3NF", top_k="99", ngawur="x")
     check("Error" not in out, "argumen asing dibuang, top_k dibatasi")
-    check(len(reg.names) == 11 and {"update_task", "delete_task", "list_notes", "update_note", "delete_note"} <= set(reg.names),
-          "11 tool terdaftar (termasuk update_note, delete_note)")
+    check(len(reg.names) == 15 and {"update_task", "delete_task", "list_notes", "update_note", "delete_note", "add_class", "list_schedule"} <= set(reg.names),
+          "15 tool terdaftar (termasuk update_note, delete_note, tool jadwal)")
 
     def boom(msgs, tools=None):
         raise ProviderError("Semua slot chat habis\nlaporan panjang")
@@ -215,12 +215,12 @@ def main():
     check("Senin 2026-11-09 (besok)" in p and 'due_date="2026-11-13"' in p and "2026-12-12" in p,
           "kalender dan contoh tanggal dihitung benar")
     approx = (len(p) + sum(len(s.description) + len(json.dumps(s.parameters)) for s in reg.specs())) // 3.5
-    print(f"  info: prompt + 11 tool ~ {int(approx)} token per request")
+    print(f"  info: prompt + 15 tool ~ {int(approx)} token per request")
     try:
         from google.genai import types
         for s in reg.specs():
             types.FunctionDeclaration(name=s.name, description=s.description, parameters_json_schema=s.parameters)
-        check(True, "schema 11 tool diterima SDK Gemini")
+        check(True, "schema 15 tool diterima SDK Gemini")
     except Exception as e:  # noqa: BLE001
         check(False, f"schema ditolak SDK: {e}")
 

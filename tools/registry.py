@@ -12,7 +12,7 @@ import config
 from providers.base import Message, ProviderError, ToolCall, ToolSpec
 import privacy
 from agent import WRITE_TOOLS
-from tools import knowledge, notes, quiz, tasks
+from tools import jadwal, knowledge, notes, quiz, tasks
 from undo import Journal
 from tools.common import ToolContext, ToolError
 
@@ -67,6 +67,10 @@ class Registry:
                 (notes.UPDATE_SPEC, notes.update_note),
                 (notes.DELETE_SPEC, notes.delete_note),
                 (quiz.SPEC, quiz.make_quiz),
+                (jadwal.ADD_SPEC, jadwal.add_class),
+                (jadwal.LIST_SPEC, jadwal.list_schedule),
+                (jadwal.UPDATE_SPEC, jadwal.update_class),
+                (jadwal.DELETE_SPEC, jadwal.delete_class),
             ]}
 
     @property

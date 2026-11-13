@@ -26,7 +26,7 @@ GROUPS: dict[str, tuple[str, ...]] = {
     "catatan": ("add_note", "list_notes", "update_note", "delete_note"),
     "pengetahuan": ("search_knowledge",),
     "kuis": ("make_quiz",),
-    "jadwal": ("add_class", "list_schedule", "delete_class"),
+    "jadwal": ("add_class", "list_schedule", "update_class", "delete_class"),
 }
 ALWAYS = ("pengetahuan",)           # kelompok yang selalu ikut
 LONG_TEXT = 400                     # pesan lebih panjang dari ini -> semua tool

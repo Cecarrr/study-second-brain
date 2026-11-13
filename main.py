@@ -8,6 +8,7 @@ import sys
 
 import config
 import dashboard
+import schedule_import
 import keypool
 import prefs
 import privacy
@@ -24,9 +25,24 @@ from tools.summary import build_daily_summary
 
 log = logging.getLogger(__name__)
 
-HELP = ("Perintah: /today /tasks /notes /ingest /source [N] /undo /mode simple|normal /dashboard /privacy "
+HELP = ("Perintah: /today /tasks /notes /jadwal [hari] /import-jadwal FILE /ingest /source [N] /undo /mode simple|normal /dashboard /privacy "
         "/trash /restore N /purge /usage /reset /help /exit. "
         "Selain itu, tulis saja seperti biasa.")
+
+
+def import_jadwal(ctx, reg, path: str) -> str:
+    """/import-jadwal FILE.csv|.ics (tanpa LLM). Tanpa argumen: tampilkan format CSV."""
+    from pathlib import Path
+    if not path:
+        return "Pemakaian: /import-jadwal FILE.csv atau FILE.ics\nContoh isi CSV:\n" + schedule_import.TEMPLATE
+    p = Path(path)
+    if not p.is_file() or p.suffix.lower() not in (".csv", ".ics"):
+        return f"File '{path}' tidak ditemukan atau bukan .csv/.ics."
+    before = reg.journal.snapshot(ctx)
+    report = schedule_import.import_text(ctx, p.read_text(encoding="utf-8-sig", errors="replace"), p.suffix.lower()[1:])
+    if reg.journal.snapshot(ctx) != before:
+        reg.journal.push(f"import-jadwal {p.name}", before)          # bisa dibatalkan dengan /undo
+    return report
 
 
 def ingest(store, embedder):
@@ -51,7 +67,7 @@ def main():
     reg = build_registry(ctx)
     chat_fn = ((lambda m, t=None: keypool.chat(privacy.redact_messages(m), t))
                if privacy.mode() == "strict" else keypool.chat)
-    agent = Agent(reg, chat_fn, courses_fn=store.courses, today_fn=ctx.today, notify=print)
+    agent = Agent(reg, chat_fn, courses_fn=ctx.known_courses, today_fn=ctx.today, notify=print)
     agent.style = prefs.load().get("mode", "normal")
     print(f"Study Second Brain | indeks: {len(store)} chunk. {HELP}")
     if config.SUMMARY_ON_START:
@@ -103,6 +119,10 @@ def main():
                     print(f"Mode jawaban: {arg}.")
                 else:
                     print(f"Mode sekarang: {agent.style}. Pakai: /mode simple  atau  /mode normal")
+            elif cmd.startswith("/jadwal"):
+                print(reg.execute(ToolCall(name="list_schedule", args={"day": text[7:].strip() or "minggu ini"})).content)
+            elif cmd.startswith("/import-jadwal"):
+                print(import_jadwal(ctx, reg, text[14:].strip().strip('"')))
             elif cmd == "/trash":
                 print(trash.list_trash(ctx))
             elif cmd.startswith("/restore"):

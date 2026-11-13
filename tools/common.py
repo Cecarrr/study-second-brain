@@ -28,6 +28,9 @@ class ToolContext:
     def today(self) -> date:
         return self.tasks.today()
 
+    def now(self):
+        return self.tasks.now_fn()
+
     def chat(self, messages, tools=None):
         if self.llm_chat is not None:
             return self.llm_chat(messages, tools)
@@ -36,9 +39,15 @@ class ToolContext:
 
     def known_courses(self) -> list[str]:
         try:
-            return self.store.courses()
+            base = list(self.store.courses())
         except Exception:               # noqa: BLE001
-            return []
+            base = []
+        try:
+            extra = self.tasks.sched_courses()      # mata kuliah dari jadwal ikut dikenal
+        except Exception:               # noqa: BLE001
+            extra = []
+        seen = {norm(c) for c in base}
+        return base + [c for c in extra if norm(c) not in seen]
 
     def resolve_course(self, name: str | None) -> tuple[str | None, bool]:
         """(nama_kanonik, dikenal). Nama yang cocok dengan mata kuliah di indeks dipakai apa adanya

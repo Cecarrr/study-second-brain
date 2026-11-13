@@ -177,7 +177,7 @@ class DeleteTaskTests(Base):
 class RegistryTests(Base):
     def test_sembilan_tool_terdaftar_dan_skema_valid(self):
         reg = build_registry(self.ctx)
-        self.assertEqual(len(reg.names), 11)
+        self.assertEqual(len(reg.names), 15)
         for need in ("update_task", "delete_task", "list_notes"):
             self.assertIn(need, reg.names)
         for spec in reg.specs():

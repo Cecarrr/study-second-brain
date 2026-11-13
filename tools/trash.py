@@ -7,11 +7,14 @@ from tools.notes import _file_ref, _reindex
 from providers.base import ProviderError
 
 
+_KIND = {"task": "tugas", "note": "catatan", "class": "kelas"}
+
+
 def list_trash(ctx: ToolContext) -> str:
     items = ctx.tasks.trash_list()
     if not items:
         return "Tempat sampah kosong."
-    lines = [f"#{i['id']} [{'tugas' if i['kind'] == 'task' else 'catatan'}] {i['label']} | dihapus "
+    lines = [f"#{i['id']} [{_KIND.get(i['kind'], i['kind'])}] {i['label']} | dihapus "
              f"{i['deleted_at'][:16].replace('T', ' ')} | kedaluwarsa {i['expires_at'][:10]}" for i in items]
     return f"{len(items)} item di tempat sampah (pulihkan: /restore NOMOR):\n" + "\n".join(lines)
 
@@ -23,6 +26,9 @@ def restore(ctx: ToolContext, trash_id: int) -> str:
     if item["kind"] == "task":
         t = ctx.tasks.restore_task(trash_id)
         return f"Tugas dipulihkan: #{t['id']} {t['title']}"
+    if item["kind"] == "class":
+        import timetable as tt
+        return f"Sesi kuliah dipulihkan: {tt.fmt_session(ctx.tasks.restore_class(trash_id))}"
     ctx.notes_dir.mkdir(parents=True, exist_ok=True)
     name = item["payload"]["file"]
     path = ctx.notes_dir / name

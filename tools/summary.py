@@ -16,6 +16,17 @@ def _due(t: dict) -> date | None:
         return None
 
 
+def _class_lines(tasks: TaskDB, today) -> list[str]:
+    """Kelas hari ini (kosong bila jadwal belum diisi)."""
+    import timetable as tt
+    if not tasks.sched_list():
+        return []
+    rows = tasks.sched_list(weekday=today.weekday())
+    if not rows:
+        return ["  Kelas hari ini: tidak ada."]
+    return [f"  Kelas hari ini ({len(rows)}):"] + [f"    {tt.fmt_brief(r)}" for r in rows]
+
+
 def build_daily_summary(tasks: TaskDB, days: int | None = None) -> str:
     """Terlambat, hari ini sampai `days` hari ke depan, dan hitungan sisanya."""
     days = config.SUMMARY_DUE_DAYS if days is None else days
@@ -23,9 +34,10 @@ def build_daily_summary(tasks: TaskDB, days: int | None = None) -> str:
     limit = today + timedelta(days=days)
     head = f"Ringkasan {DAYS[today.weekday()]}, {today.day} {MONTHS[today.month - 1]} {today.year}"
 
+    classes = _class_lines(tasks, today)
     pending = tasks.list("pending")
     if not pending:
-        return f"{head}\n  Tidak ada tugas yang belum selesai."
+        return "\n".join([head, *classes, "  Tidak ada tugas yang belum selesai."])
 
     overdue, soon, later, nodue = [], [], 0, 0
     for t in pending:                       # sudah terurut tenggat terdekat
@@ -39,7 +51,7 @@ def build_daily_summary(tasks: TaskDB, days: int | None = None) -> str:
         else:
             later += 1
 
-    lines = [head]
+    lines = [head, *classes]
     if overdue:
         lines.append(f"TERLAMBAT ({len(overdue)}):")
         lines += [f"  {fmt_task(t, today)}" for t in overdue]

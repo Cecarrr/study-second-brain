@@ -119,14 +119,15 @@ class _Reg:
 
 class RegistryShapeTests(unittest.TestCase):
     def test_kelompok_tanpa_tool_terdaftar_tidak_dihitung(self):
-        # jadwal belum terpasang (fitur 3): pesan jadwal tidak boleh berakhir hanya dengan search_knowledge
-        self.assertNotIn("jadwal", AVAIL)
-        self.assertEqual(names("besok ada kelas apa?"), ALL)
+        # tool jadwal sudah terpasang: pesan jadwal mendapat kelompok jadwal, bukan semua tool
+        self.assertIn("jadwal", AVAIL)
+        self.assertEqual(names("besok ada kelas apa?"),
+                         {"search_knowledge", "add_class", "list_schedule", "update_class", "delete_class"})
 
     def test_kelompok_jadwal_aktif_bila_tool_ada(self):
-        reg = _Reg(("add_class", "list_schedule", "delete_class"))
+        reg = _Reg(("add_class", "list_schedule", "update_class", "delete_class"))
         got = names("besok ada kelas apa?", reg=reg)
-        self.assertEqual(got, {"search_knowledge", "add_class", "list_schedule", "delete_class"})
+        self.assertEqual(got, {"search_knowledge", "add_class", "list_schedule", "update_class", "delete_class"})
         self.assertEqual(names("kuis aku 3 soal normalisasi", reg=reg), {"search_knowledge", "make_quiz"})
 
     def test_tool_tanpa_kelompok_selalu_ikut(self):
