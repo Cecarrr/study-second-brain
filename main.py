@@ -19,15 +19,35 @@ from rag.indexer import SyncReport, sync_folder
 from rag.stack import open_stack
 from rag.store import EmbeddingMismatchError
 from tools.common import ToolContext
+from rag import importers
 from tools import sources, trash
 from tools.registry import build_registry
 from tools.summary import build_daily_summary
 
 log = logging.getLogger(__name__)
 
-HELP = ("Perintah: /today /tasks /notes /jadwal [hari] /import-jadwal FILE /ingest /source [N] /undo /mode simple|normal /dashboard /privacy "
+HELP = ("Perintah: /today /tasks /notes /jadwal [hari] /import-jadwal FILE /import SUMBER /ingest /source [N] /undo /mode simple|normal /dashboard /privacy "
         "/trash /restore N /purge /usage /reset /help /exit. "
         "Selain itu, tulis saja seperti biasa.")
+
+
+def do_import(ctx, store, embedder, argline: str) -> str:
+    """/import SUMBER [--course NAMA] [--title JUDUL] [--no-index] | --check (tanpa LLM)."""
+    args = importers.parse_args(argline)
+    if args.check:
+        return importers.check_deps_text()
+    if not args.source:
+        return importers.USAGE
+    try:
+        results = importers.run_import(args)
+    except importers.ImportFailed as e:
+        return f"Impor gagal: {e}"
+    report = "\n".join(["Hasil impor:"] + [r.line() for r in results])
+    if not args.no_index and any(r.dest for r in results):
+        print(report)
+        ingest(store, embedder)                         # memakai jalur indeks biasa (cache + batas kuota)
+        return "Selesai. Coba tanyakan isinya, atau /source untuk melihat sumbernya."
+    return report + "\nIndeks belum diperbarui; jalankan /ingest."
 
 
 def import_jadwal(ctx, reg, path: str) -> str:
@@ -119,6 +139,8 @@ def main():
                     print(f"Mode jawaban: {arg}.")
                 else:
                     print(f"Mode sekarang: {agent.style}. Pakai: /mode simple  atau  /mode normal")
+            elif cmd == "/import" or cmd.startswith("/import "):
+                print(do_import(ctx, store, embedder, text[7:].strip()))
             elif cmd.startswith("/jadwal"):
                 print(reg.execute(ToolCall(name="list_schedule", args={"day": text[7:].strip() or "minggu ini"})).content)
             elif cmd.startswith("/import-jadwal"):
