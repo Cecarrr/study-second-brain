@@ -36,6 +36,8 @@ def coerce_args(spec: ToolSpec, raw: dict | None) -> dict:
                 v = v if isinstance(v, bool) else str(v).strip().lower() in ("true", "1", "ya", "yes")
             elif t == "string":
                 v = str(v).strip()
+                if len(v) > int(getattr(config, "SECURITY_MAX_ARG_CHARS", 20000)):
+                    raise ToolError(f"Parameter '{k}' terlalu panjang ({len(v)} karakter); ringkas atau pecah.")
             elif t == "array":
                 items = v.split(",") if isinstance(v, str) else list(v)
                 v = [str(x).strip() for x in items if str(x).strip()]
@@ -100,6 +102,9 @@ class Registry:
             except Exception as e:  # noqa: BLE001
                 log.exception("Tool %s gagal", call.name)
                 out, ok = f"Error tak terduga: {type(e).__name__}: {e}", False
+        cap = int(getattr(config, "SECURITY_TOOL_OUTPUT_MAX", 12000))
+        if len(out) > cap:
+            out = out[:cap] + f"\n[...dipotong: keluaran melebihi {cap} karakter...]"
         if before is not None and ok and self.journal.snapshot(self.ctx) != before:
             self.journal.push(f"{call.name} {json.dumps(call.args, ensure_ascii=False)[:80]}", before)
         self._log(call, ok, out, time.time() - t0)

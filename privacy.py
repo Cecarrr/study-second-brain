@@ -94,3 +94,17 @@ def note_warning(text: str) -> str:
     return (f" PERINGATAN PRIVASI: catatan ini memuat {kinds}. Teks catatan dikirim ke API embedding "
             "(tier gratis dapat dipakai untuk pengembangan produk). Sampaikan ke pengguna; "
             "hapus datanya lewat update_note bila tidak perlu.")
+
+
+import logging  # noqa: E402
+
+
+class LogFilter(logging.Filter):
+    """Samarkan data sensitif (kunci API, email, dll.) di semua baris log sebelum ditulis."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            record.msg, record.args = redact(record.getMessage())[0], ()
+        except Exception:  # noqa: BLE001
+            pass
+        return True

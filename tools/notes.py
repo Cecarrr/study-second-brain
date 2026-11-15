@@ -6,6 +6,7 @@ from datetime import datetime
 
 import config
 import privacy
+import security
 from db.database import TRASH_DAYS, norm, title_matches
 from providers.base import ProviderError, ToolSpec
 from rag.indexer import index_document
@@ -76,7 +77,7 @@ def list_notes(ctx: ToolContext, a: dict) -> str:
         flag = "" if r["indexed"] else " | BELUM ter-index (jalankan /ingest)"
         lines.append(f"- {r['created']} | {r['title']} | {r['course']} | {r['file']}{tags}{flag}\n"
                      f"  \"{r['preview']}\"")
-    return head + "\n" + "\n".join(lines)
+    return head + "\n" + security.wrap_untrusted("\n".join(lines), "catatan")
 
 
 # ---------------------------------------------------------------- ubah / hapus catatan
@@ -201,7 +202,7 @@ def update_note(ctx: ToolContext, a: dict) -> str:
     _write_note(path, meta, body)
     status = _reindex(ctx, path)
     return (f"Catatan '{meta.get('title') or row['title']}' ({row['file']}) diperbarui: "
-            f"{', '.join(changed)} {status}." + privacy.note_warning(body))
+            f"{', '.join(changed)} {status}." + privacy.note_warning(body) + security.injection_warning(body))
 
 
 def delete_note(ctx: ToolContext, a: dict) -> str:

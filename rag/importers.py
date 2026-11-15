@@ -20,10 +20,11 @@ from dataclasses import dataclass, field
 from datetime import date
 from html.parser import HTMLParser
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 import config
 import privacy
+import security
 
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
 AUDIO_EXT = {".mp3", ".wav", ".m4a", ".ogg", ".flac", ".mp4", ".mkv", ".webm", ".aac"}
@@ -127,15 +128,20 @@ def _clean_source(url: str) -> str:
 
 
 def _write_md(kind: str, title: str, source: str, body: str, course: str | None) -> Result:
-    body = body.strip()
+    body, title = security.clean_invisible(body).strip(), security.clean_invisible(title)
     if len(body) < 80:
         raise ImportFailed(f"teks terlalu sedikit ({len(body)} karakter); halaman kosong, butuh login, atau dirender JavaScript")
     name = f"{_slug(title)}-{hashlib.sha1(source.encode()).hexdigest()[:6]}.md"     # sumber sama -> file sama (impor ulang menimpa)
     path = _imports_dir(course) / name
+    flags = security.scan_injection(body)
     head = "\n".join([f"title: {' '.join(title.split())}", f"source: {source}", f"type: {kind}",
-                      f"imported: {date.today().isoformat()}"])
+                      f"imported: {date.today().isoformat()}"] + ([f"flagged: {', '.join(flags)}"] if flags else []))
     path.write_text(f"---\n{head}\n---\n{body}\n", encoding="utf-8")
     res = Result(kind, source, _rel(path), len(body))
+    if flags:
+        res.warnings.append(f"PERINGATAN KEAMANAN: teks memuat pola yang menyerupai instruksi untuk AI ({', '.join(flags)}). "
+                            "Diperlakukan sebagai data dan ditandai, tetapi periksa sumbernya sebelum dipercaya")
+        security.log_event("import_flagged", source=source, flags=flags)
     _, found = privacy.redact(body)
     if found and privacy.mode() != "off":
         res.warnings.append("teks memuat " + ", ".join(f"{k.lower()} ({n})" for k, n in found.items()) +
@@ -144,6 +150,18 @@ def _write_md(kind: str, title: str, source: str, body: str, course: str | None)
 
 
 # ---------------------------------------------------------------- web
+_VOID = {"br", "img", "hr", "input", "meta", "link", "source", "wbr", "area", "col", "embed", "param", "track"}
+_HIDDEN_STYLE = re.compile(r"display\s*:\s*none|visibility\s*:\s*hidden|font-size\s*:\s*0|opacity\s*:\s*0(?:\.0+)?\b|"
+                           r"(?:height|width)\s*:\s*0(?:px)?\b|(?:left|top|text-indent)\s*:\s*-\d{3,}", re.I)
+
+
+def _is_hidden(attrs) -> bool:
+    """Elemen yang tidak terlihat pembaca (jalur umum menyembunyikan instruksi untuk AI)."""
+    d = {k.lower(): (v or "") for k, v in attrs}
+    return ("hidden" in d or d.get("aria-hidden", "").lower() == "true"
+            or bool(_HIDDEN_STYLE.search(d.get("style", ""))))
+
+
 class _Page(HTMLParser):
     SKIP = {"script", "style", "noscript", "nav", "header", "footer", "aside", "form", "svg", "iframe", "button", "template"}
     HEAD = {"h1": 1, "h2": 2, "h3": 3, "h4": 4}
@@ -153,6 +171,7 @@ class _Page(HTMLParser):
         self.only_main, self.main_depth, self.skip, self.lines = only_main, 0, 0, []
         self.cur: list[str] = []
         self.title, self._in_title, self.prefix, self.pre, self.row = "", False, "", False, None
+        self.hid, self.hid_depth = None, 0
 
     def _flush(self):
         text = " ".join("".join(self.cur).split()) if not self.pre else "".join(self.cur).strip("\n")
@@ -163,6 +182,14 @@ class _Page(HTMLParser):
         self.prefix = ""
 
     def handle_starttag(self, tag, attrs):
+        if self.hid:
+            if tag == self.hid:
+                self.hid_depth += 1
+            return
+        if tag not in _VOID and _is_hidden(attrs):
+            self._flush()
+            self.hid, self.hid_depth = tag, 1
+            return
         if tag == "title":
             self._in_title = True
         if tag in self.SKIP:
@@ -188,6 +215,12 @@ class _Page(HTMLParser):
             self.pre = True
 
     def handle_endtag(self, tag):
+        if self.hid:
+            if tag == self.hid:
+                self.hid_depth -= 1
+                if self.hid_depth == 0:
+                    self.hid = None
+            return
         if tag == "title":
             self._in_title = False
         if tag in self.SKIP:
@@ -213,7 +246,7 @@ class _Page(HTMLParser):
     def handle_data(self, data):
         if self._in_title:
             self.title += data
-        elif not self.skip:
+        elif not self.skip and not self.hid:
             self.cur.append(data)
 
 
@@ -250,32 +283,46 @@ def _http_get(url: str, **kw):
 HTTP_GET = _http_get          # diganti di tes
 
 
-def fetch(url: str):
-    """Unduh URL dengan batas ukuran dan waktu. -> (isi bytes, content_type, url akhir)."""
+def _check_url(url: str):
     p = urlparse(url)
     if p.scheme not in ("http", "https") or not p.netloc:
         raise ImportFailed("hanya URL http/https yang didukung")
+    if p.username or p.password:
+        raise ImportFailed("URL yang memuat nama pengguna/kata sandi ditolak")
     if not getattr(config, "IMPORT_ALLOW_PRIVATE", False) and not _public_host(p.hostname or ""):
         raise ImportFailed("alamat lokal/privat ditolak (atur IMPORT_ALLOW_PRIVATE=True di config.py bila memang perlu)")
+    return p
+
+
+def fetch(url: str):
+    """Unduh URL: tiap lompatan pengalihan divalidasi (anti-SSRF), dengan batas ukuran dan waktu.
+    -> (isi bytes, content_type, url akhir)."""
     limit = int(getattr(config, "IMPORT_MAX_BYTES", 2_000_000))
+    current = url
     try:
-        r = HTTP_GET(url, timeout=int(getattr(config, "IMPORT_TIMEOUT_S", 20)), stream=True,
-                     headers={"User-Agent": "StudySecondBrain/1.0"})
-        r.raise_for_status()
-        if not getattr(config, "IMPORT_ALLOW_PRIVATE", False) and urlparse(r.url).hostname != p.hostname \
-                and not _public_host(urlparse(r.url).hostname or ""):
-            raise ImportFailed("pengalihan ke alamat lokal/privat ditolak")
-        chunks, size = [], 0
-        for part in r.iter_content(65536):
-            size += len(part)
-            if size > limit:
-                raise ImportFailed(f"file lebih besar dari {limit // 1000} KB (atur IMPORT_MAX_BYTES)")
-            chunks.append(part)
+        for _hop in range(6):
+            _check_url(current)
+            r = HTTP_GET(current, timeout=int(getattr(config, "IMPORT_TIMEOUT_S", 20)), stream=True,
+                         allow_redirects=False, headers={"User-Agent": "StudySecondBrain/1.0"})
+            if int(getattr(r, "status_code", 200)) in (301, 302, 303, 307, 308):
+                loc = r.headers.get("Location")
+                if not loc:
+                    raise ImportFailed("pengalihan tanpa tujuan")
+                current = urljoin(current, loc)
+                continue
+            r.raise_for_status()
+            chunks, size = [], 0
+            for part in r.iter_content(65536):
+                size += len(part)
+                if size > limit:
+                    raise ImportFailed(f"file lebih besar dari {limit // 1000} KB (atur IMPORT_MAX_BYTES)")
+                chunks.append(part)
+            return b"".join(chunks), r.headers.get("Content-Type", ""), current
+        raise ImportFailed("terlalu banyak pengalihan")
     except ImportFailed:
         raise
     except Exception as e:  # noqa: BLE001
         raise ImportFailed(f"gagal mengunduh: {type(e).__name__}: {str(e)[:120]}")
-    return b"".join(chunks), r.headers.get("Content-Type", ""), r.url
 
 
 def import_web(url: str, course=None, title=None) -> Result:
@@ -411,6 +458,9 @@ def import_file(path: Path, course=None, title=None) -> Result:
     if ext not in DOC_EXT:
         raise ImportFailed(f"format '{ext or '(tanpa ekstensi)'}' tidak didukung")
     res = Result("file", path.name)
+    max_mb = int(getattr(config, "IMPORT_MAX_FILE_MB", 50))
+    if path.stat().st_size > max_mb * 1_000_000:
+        raise ImportFailed(f"file lebih besar dari {max_mb} MB (atur IMPORT_MAX_FILE_MB)")
     if ext == ".pdf" and _scanned_pdf(path):
         res.warnings.append("PDF ini tampak hasil scan (hampir tanpa teks); teksnya tidak akan terbaca tanpa OCR. "
                             "Ekspor halamannya sebagai gambar lalu /import gambar itu")
@@ -428,7 +478,8 @@ def run_import(args: Args) -> list[Result]:
         return [import_youtube(src, args.course, args.title) if youtube_id(src) else import_web(src, args.course, args.title)]
     p = Path(src)
     if p.is_dir():
-        files = sorted(f for f in p.rglob("*") if f.is_file() and f.suffix.lower() in IMAGE_EXT | AUDIO_EXT | DOC_EXT)[:200]
+        files = sorted(f for f in p.rglob("*") if f.is_file() and not f.is_symlink()      # symlink dilewati
+                       and f.suffix.lower() in IMAGE_EXT | AUDIO_EXT | DOC_EXT)[:200]
         if not files:
             raise ImportFailed("tidak ada file yang didukung di folder itu")
         out = []

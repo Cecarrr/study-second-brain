@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Callable, Iterator
 
 import config
+import security
 from rag import convert
 
 log = logging.getLogger(__name__)
@@ -606,6 +607,7 @@ def read_document(ref: FileRef) -> Document:
         return doc
 
     try:
+        security.check_file(path)                      # batas ukuran + arsip membengkak (zip bomb)
         reader(path, doc)
     except ImportError as e:
         pkg = _PIP_NAMES.get(e.name or "", e.name or "?")

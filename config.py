@@ -188,5 +188,7 @@ def setup_logging(level: int = logging.INFO) -> None:
     fh = RotatingFileHandler(LOG_DIR / "app.log", maxBytes=1_000_000,
                              backupCount=3, encoding="utf-8")
     fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    import privacy                                   # impor lambat: privacy mengimpor config
+    fh.addFilter(privacy.LogFilter())                # log tidak boleh memuat kunci/data pribadi
     fh._ssb = True  # type: ignore[attr-defined]
     root.addHandler(fh)

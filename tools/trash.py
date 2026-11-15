@@ -2,6 +2,7 @@
 sehingga pemulihan tidak bergantung pada model."""
 from __future__ import annotations
 
+import security
 from tools.common import ToolContext
 from tools.notes import _file_ref, _reindex
 from providers.base import ProviderError
@@ -31,6 +32,8 @@ def restore(ctx: ToolContext, trash_id: int) -> str:
         return f"Sesi kuliah dipulihkan: {tt.fmt_session(ctx.tasks.restore_class(trash_id))}"
     ctx.notes_dir.mkdir(parents=True, exist_ok=True)
     name = item["payload"]["file"]
+    if not security.safe_note_name(name):
+        return "Item ini memuat nama file yang tidak aman; tidak dipulihkan."
     path = ctx.notes_dir / name
     n = 2
     while path.exists():                      # nama lama sudah dipakai catatan lain

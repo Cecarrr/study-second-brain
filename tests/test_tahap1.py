@@ -316,7 +316,7 @@ class AgentDedupeTests(unittest.TestCase):
         def chat(msgs, specs):
             seen.append(msgs[-1].content if msgs[-1].role == "tool" else "")
             return next(script)
-        Agent(reg, chat).ask("x")
+        Agent(reg, chat).ask("hapus tugas A, lalu perbarui daftarnya")
         return reg, seen
 
     def test_baca_setelah_tulis_dijalankan_ulang(self):

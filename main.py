@@ -9,6 +9,7 @@ import sys
 import config
 import dashboard
 import schedule_import
+import security_check
 import keypool
 import prefs
 import privacy
@@ -26,7 +27,7 @@ from tools.summary import build_daily_summary
 
 log = logging.getLogger(__name__)
 
-HELP = ("Perintah: /today /tasks /notes /jadwal [hari] /import-jadwal FILE /import SUMBER /ingest /source [N] /undo /mode simple|normal /dashboard /privacy "
+HELP = ("Perintah: /today /tasks /notes /jadwal [hari] /import-jadwal FILE /import SUMBER /ingest /source [N] /undo /mode simple|normal /dashboard /privacy /security "
         "/trash /restore N /purge /usage /reset /help /exit. "
         "Selain itu, tulis saja seperti biasa.")
 
@@ -128,6 +129,8 @@ def main():
                 print(reg.journal.undo(ctx))
             elif cmd == "/dashboard":
                 print(dashboard.build_dashboard(ctx))
+            elif cmd == "/security":
+                print(security_check.report()[0])
             elif cmd == "/privacy":
                 print(f"Mode privasi: {privacy.mode()} (off | logs | strict; ubah PRIVACY_MODE di config.py). "
                       "logs = samarkan data sensitif di log; strict = juga di pesan ke model chat.")

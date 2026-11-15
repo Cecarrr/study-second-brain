@@ -6,6 +6,7 @@ from pathlib import Path
 
 import config
 import privacy
+import security
 from providers.base import ProviderError, ToolSpec
 from rag.indexer import index_document
 from rag.ingest import FileRef, read_document, sha256_file
@@ -59,7 +60,8 @@ def search_knowledge(ctx: ToolContext, a: dict) -> str:
         course = None
     res = ctx.retriever.search(a["query"], k=a.get("top_k") or config.TOP_K, course=course)
     ctx.last_sources = list(res.hits)
-    return note + res.format()
+    body = res.format()
+    return note + (security.wrap_untrusted(body, "materi/catatan") if res.hits else body)
 
 
 def _slug(text: str) -> str:
@@ -113,4 +115,4 @@ def add_note(ctx: ToolContext, a: dict) -> str:
         status = ("tetapi BELUM masuk pencarian karena embedding sedang tidak tersedia "
                   f"({first}); akan di-index saat 'python index_materi.py' dijalankan")
     where = f" (mata kuliah: {course})" if course else ""
-    return f"Catatan '{title}'{where} tersimpan di {path.name} {status}." + privacy.note_warning(content)
+    return f"Catatan '{title}'{where} tersimpan di {path.name} {status}." + privacy.note_warning(content) + security.injection_warning(content)
