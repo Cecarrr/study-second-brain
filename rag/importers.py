@@ -340,6 +340,45 @@ def import_web(url: str, course=None, title=None) -> Result:
     return _write_md("web", title or page_title or urlparse(final).netloc, _clean_source(url), md, course)
 
 
+def import_gdrive(url: str, course=None, title=None) -> Result:
+    """Impor Google Docs / Sheets / Slides publik melalui tautan ekspor."""
+    p = urlparse(url)
+    if "docs.google.com" not in (p.hostname or ""):
+        raise ImportFailed("bukan URL Google Docs yang valid")
+    
+    export_url = url
+    if "/document/d/" in p.path:
+        doc_id = p.path.split("/document/d/")[1].split("/")[0]
+        export_url = f"https://docs.google.com/document/d/{doc_id}/export?format=txt"
+    elif "/spreadsheets/d/" in p.path:
+        sheet_id = p.path.split("/spreadsheets/d/")[1].split("/")[0]
+        export_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
+    
+    data, ctype, final = fetch(export_url)
+    text = data.decode("utf-8", errors="replace")
+    doc_title = title or f"Google Doc {doc_id if 'doc_id' in locals() else 'File'}"
+    return _write_md("gdrive", doc_title, _clean_source(url), text, course)
+
+
+def import_markdown_folder(folder_path: str | Path, course=None) -> list[Result]:
+    """Impor folder berisi file Markdown (Obsidian / Notion vault export)."""
+    p = Path(folder_path)
+    if not p.exists() or not p.is_dir():
+        raise ImportFailed(f"folder tidak ditemukan: {folder_path}")
+    
+    results = []
+    for md_file in p.rglob("*.md"):
+        if md_file.is_file():
+            try:
+                content = md_file.read_text(encoding="utf-8", errors="replace")
+                title = md_file.stem
+                res = _write_md("markdown_folder", title, str(md_file), content, course)
+                results.append(res)
+            except Exception as e:
+                results.append(Result("markdown_folder", str(md_file), warnings=[str(e)]))
+    return results
+
+
 # ---------------------------------------------------------------- YouTube
 def youtube_id(url: str) -> str | None:
     p = urlparse(url)

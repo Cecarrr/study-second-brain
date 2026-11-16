@@ -1,0 +1,94 @@
+{
+  "2026-11-07": {
+    "mock/mock-1": {
+      "requests": 33,
+      "errors": 0,
+      "input_tokens": 151789,
+      "output_tokens": 0
+    },
+    "gemini/gemini-embedding-001": {
+      "requests": 355,
+      "errors": 48,
+      "input_tokens": 169853,
+      "output_tokens": 0
+    },
+    "keypool/gemini-embedding-001": {
+      "requests": 48,
+      "errors": 0,
+      "input_tokens": 9085,
+      "output_tokens": 0
+    }
+  },
+  "2026-11-08": {
+    "mock/mock-1": {
+      "requests": 22,
+      "errors": 0,
+      "input_tokens": 298,
+      "output_tokens": 0
+    },
+    "keypool/gemini-embedding-001": {
+      "requests": 3,
+      "errors": 0,
+      "input_tokens": 135,
+      "output_tokens": 0
+    }
+  },
+  "2026-11-09": {
+    "mock/mock-1": {
+      "requests": 81,
+      "errors": 0,
+      "input_tokens": 2093,
+      "output_tokens": 0
+    },
+    "keypool/e1": {
+      "requests": 12,
+      "errors": 2,
+      "input_tokens": 60,
+      "output_tokens": 0
+    },
+    "keypool/gemini-embedding-001": {
+      "requests": 8,
+      "errors": 0,
+      "input_tokens": 164,
+      "output_tokens": 0
+    }
+  },
+  "2026-11-10": {
+    "mock/mock-1": {
+      "requests": 70,
+      "errors": 0,
+      "input_tokens": 1944,
+      "output_tokens": 0
+    }
+  },
+  "2026-11-13": {
+    "keypool/e1": {
+      "requests": 18,
+      "errors": 3,
+      "input_tokens": 90,
+      "output_tokens": 0
+    },
+    "mock/mock-1": {
+      "requests": 86,
+      "errors": 0,
+      "input_tokens": 2949,
+      "output_tokens": 0
+    }
+  },
+  "2026-11-14": {
+    "mock/mock-1": {
+      "requests": 117,
+      "errors": 0,
+      "input_tokens": 3546,
+      "output_tokens": 0
+    }
+  },
+  "2026-11-15": {
+    "mock/mock-1": {
+      "requests": 675,
+      "errors": 0,
+      "input_tokens": 24021,
+      "output_tokens": 0
+    }
+  }
+}

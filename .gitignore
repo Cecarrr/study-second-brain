@@ -1,30 +1,58 @@
-# lingkungan dan rahasia
-.venv/
-.env
-.env.*
-!.env.example
-pool.toml
-
-# python
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
 .pytest_cache/
 
-# editor
-.vscode/
+# Environments & Secrets
+.env
+pool.toml
 
-# data pribadi dan hasil olahan: jangan di-commit
-data/
-logs/
-
-# SQLite beserta berkas pendampingnya
+# Database & Logs
 *.db
-*.db-wal
-*.db-shm
-*.db-journal
+*.sqlite
+*.sqlite3
+logs/
+*.log
 
-# hasil evaluasi dan berkas sementara
-hasil-eval*.md
-hasil-eval*.csv
-PATCH_*.md
-*.zip
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini

@@ -1,0 +1,8 @@
+cidr,subnet_mask,jumlah_host_usable,keterangan
+/24,255.255.255.0,254,Jaringan kelas C standar
+/25,255.255.255.128,126,Membagi /24 menjadi 2 subnet
+/26,255.255.255.192,62,Membagi /24 menjadi 4 subnet
+/27,255.255.255.224,30,Membagi /24 menjadi 8 subnet
+/28,255.255.255.240,14,Membagi /24 menjadi 16 subnet
+/29,255.255.255.248,6,Membagi /24 menjadi 32 subnet
+/30,255.255.255.252,2,Biasa dipakai untuk link point-to-point

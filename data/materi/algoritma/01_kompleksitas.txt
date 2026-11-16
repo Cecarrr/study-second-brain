@@ -1,0 +1,13 @@
+Kompleksitas Algoritma dan Sorting
+
+Notasi Big-O menggambarkan pertumbuhan waktu eksekusi terhadap ukuran input n.
+Urutan dari tercepat: O(1), O(log n), O(n), O(n log n), O(n^2).
+
+Binary search berkompleksitas O(log n) dan hanya bisa dipakai pada data yang sudah terurut.
+
+Algoritma sorting:
+- Bubble sort: O(n^2) pada kasus rata-rata dan terburuk. Sederhana tetapi lambat.
+- Merge sort: O(n log n) pada semua kasus. Butuh memori tambahan O(n). Stabil.
+- Quick sort: O(n log n) pada kasus rata-rata, O(n^2) pada kasus terburuk (misalnya pivot selalu elemen terkecil atau terbesar). Biasanya sangat cepat di praktik.
+
+Kasus terburuk (worst case) adalah batas atas waktu eksekusi; kasus terbaik (best case) adalah batas bawah.

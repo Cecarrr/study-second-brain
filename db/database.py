@@ -12,6 +12,11 @@ from typing import Callable
 import config
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS schema_metadata (
+    version INTEGER PRIMARY KEY
+);
+INSERT OR IGNORE INTO schema_metadata(version) VALUES (1);
+
 CREATE TABLE IF NOT EXISTS tasks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT NOT NULL,
@@ -39,6 +44,25 @@ CREATE TABLE IF NOT EXISTS trash (            -- tempat sampah: tugas dan catata
     payload TEXT NOT NULL,                     -- JSON: tugas = barisnya; catatan = {file, content}
     deleted_at TEXT NOT NULL,
     expires_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS flashcards (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    question TEXT NOT NULL,
+    answer TEXT NOT NULL,
+    interval REAL DEFAULT 1.0,
+    repetitions INTEGER DEFAULT 0,
+    ease_factor REAL DEFAULT 2.5,
+    due_date TEXT,
+    created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS conversation_memory (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT,
+    role TEXT,
+    content TEXT,
+    timestamp TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS user_preferences (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
 """
 
 TRASH_DAYS = int(getattr(config, "TRASH_RETENTION_DAYS", 30))   # lama sampah disimpan sebelum dibuang
@@ -354,3 +378,88 @@ class TaskDB:
     def find_any(self, text: str) -> list[dict]:
         """Untuk ubah/hapus: tugas belum-selesai yang cocok; bila tidak ada, yang sudah selesai."""
         return self.find(text, "pending") or self.find(text, "done")
+
+    # ------------------------------------------------------------ flashcards (spaced repetition)
+    def flashcard_add(self, question: str, answer: str, due_date: str | None = None) -> dict:
+        due = due_date or self.today().isoformat()
+        with closing(self._conn()) as c, c:
+            cur = c.execute(
+                "INSERT INTO flashcards(question, answer, due_date, created_at) VALUES (?,?,?,?)",
+                (question, answer, due, self._now())
+            )
+            return dict(c.execute("SELECT * FROM flashcards WHERE id=?", (cur.lastrowid,)).fetchone())
+
+    def flashcard_list(self, due_only: bool = False) -> list[dict]:
+        with closing(self._conn()) as c:
+            if due_only:
+                today_str = self.today().isoformat()
+                rows = c.execute("SELECT * FROM flashcards WHERE due_date <= ? ORDER BY due_date, id", (today_str,)).fetchall()
+            else:
+                rows = c.execute("SELECT * FROM flashcards ORDER BY id").fetchall()
+            return [dict(r) for r in rows]
+
+    def flashcard_update_review(self, card_id: int, quality: int) -> dict | None:
+        with closing(self._conn()) as c, c:
+            r = c.execute("SELECT * FROM flashcards WHERE id=?", (card_id,)).fetchone()
+            if not r:
+                return None
+            card = dict(r)
+            interval = card["interval"]
+            repetitions = card["repetitions"]
+            ease_factor = card["ease_factor"]
+
+            if quality >= 3:
+                if repetitions == 0:
+                    interval = 1.0
+                elif repetitions == 1:
+                    interval = 6.0
+                else:
+                    interval = round(interval * ease_factor, 1)
+                repetitions += 1
+            else:
+                repetitions = 0
+                interval = 1.0
+
+            ease_factor = ease_factor + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02))
+            ease_factor = max(1.3, ease_factor)
+
+            next_due = (self.today() + timedelta(days=max(1, int(round(interval))))).isoformat()
+            c.execute(
+                "UPDATE flashcards SET interval=?, repetitions=?, ease_factor=?, due_date=? WHERE id=?",
+                (interval, repetitions, ease_factor, next_due, card_id)
+            )
+            return dict(c.execute("SELECT * FROM flashcards WHERE id=?", (card_id,)).fetchone())
+
+    # ------------------------------------------------------------ conversation memory & prefs
+    def memory_add(self, session_id: str | None, role: str, content: str) -> None:
+        with closing(self._conn()) as c, c:
+            c.execute(
+                "INSERT INTO conversation_memory(session_id, role, content, timestamp) VALUES (?,?,?,?)",
+                (session_id or "default", role, content, self._now())
+            )
+
+    def memory_list(self, session_id: str | None = None, limit: int = 20) -> list[dict]:
+        with closing(self._conn()) as c:
+            if session_id:
+                rows = c.execute(
+                    "SELECT * FROM conversation_memory WHERE session_id=? ORDER BY id DESC LIMIT ?",
+                    (session_id, limit)
+                ).fetchall()
+            else:
+                rows = c.execute(
+                    "SELECT * FROM conversation_memory ORDER BY id DESC LIMIT ?",
+                    (limit,)
+                ).fetchall()
+            return [dict(r) for r in reversed(rows)]
+
+    def pref_set(self, key: str, value: str) -> None:
+        with closing(self._conn()) as c, c:
+            c.execute(
+                "INSERT INTO user_preferences(key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=?",
+                (key, value, value)
+            )
+
+    def pref_get(self, key: str) -> str | None:
+        with closing(self._conn()) as c:
+            r = c.execute("SELECT value FROM user_preferences WHERE key=?", (key,)).fetchone()
+            return r["value"] if r else None
